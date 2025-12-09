@@ -1,0 +1,27 @@
+# Nextflow working directory
+work/
+.nextflow*
+.cache/
+timeline.html
+report.html
+dag.svg
+
+# Results shouldn't be tracked
+results/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# Editor files
+.vscode/
+.idea/
+
+# Conda & mamba environments
+.env/
+*.sif
+*.img
+

@@ -1,1 +1,0 @@
-2025-12-09 21:36:55	1.1s	astonishing_laplace	OK	80d7907ddd95a037a01f94ba752b29cc	b4805941-d9e3-49d9-a144-df44a2a94fe4	nextflow run main.nf -profile slurm
