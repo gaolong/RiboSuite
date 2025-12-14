@@ -12,9 +12,17 @@ workflow ALIGN_RIBO {
         star_index
 
     main:
-        filtered = BOWTIE2_FILTER(reads_ch, contam_index)
-        aligned  = STAR_ALIGN(filtered.map { it[0], it[1] }, star_index)
-        sorted   = SAMTOOLS_SORT_INDEX(aligned)
+        // Bowtie2 contamination filtering
+        filtered = BOWTIE2_FILTER(
+            reads_ch.map { sample_id, fastq, json, html -> tuple(sample_id, fastq) },
+            contam_index
+        )
+
+        // Use ONLY the clean reads for STAR
+        aligned = STAR_ALIGN(filtered.clean_reads, star_index)
+
+        // Sort & index BAM
+        sorted = SAMTOOLS_SORT_INDEX(aligned)
 
     emit:
         sorted
