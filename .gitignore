@@ -25,3 +25,35 @@ __pycache__/
 *.sif
 *.img
 
+# -----------------------------
+# Large data & references
+# -----------------------------
+testdata/
+reference/
+
+# Genome & annotation
+*.fa
+*.fa.gz
+*.fasta
+*.fasta.gz
+*.gtf
+*.gtf.gz
+*.gff
+*.gff3
+
+# STAR indices
+*/star/
+*.Genome
+*.SA
+*.SAindex
+
+# FASTQ / BAM
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+*.bam
+*.bai
+
+# SRA toolkit
+*.sra
