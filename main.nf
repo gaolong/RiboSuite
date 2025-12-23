@@ -1,7 +1,24 @@
 nextflow.enable.dsl=2
 
-include { RIBO_WORKFLOW } from './workflows/ribo_main.nf'
+include { RiboSuite } from './workflows/ribosuite.nf'
 
 workflow {
-    RIBO_WORKFLOW()
+
+    if ( !params.reads ) {
+        error "ERROR: --reads is required"
+    }
+
+    /*
+     * Convert params.reads into a channel of:
+     * tuple(sample_id, fastq)
+     */
+    reads_ch = Channel.fromPath(params.reads)
+        .map { file ->
+            tuple(
+                file.baseName.replaceAll(/\.fastq(\.gz)?$/, ''),
+                file
+            )
+        }
+
+    RiboSuite(reads_ch)
 }

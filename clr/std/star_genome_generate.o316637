@@ -1,0 +1,17 @@
+	/data/holwm/home/gaolong/miniforge3/envs/ribo-dev/bin/STAR-avx2 --runThreadN 8 --runMode genomeGenerate --genomeDir /data/holwm/home/gaolong/projects/RiboSuite/reference/human/GRCh38/star --genomeFastaFiles /data/holwm/home/gaolong/projects/RiboSuite/reference/human/GRCh38/GRCh38.primary_assembly.genome.fa --sjdbGTFfile /data/holwm/home/gaolong/projects/RiboSuite/reference/human/GRCh38/gencode.v45.annotation.gtf --sjdbOverhang 100
+	STAR version: 2.7.11b   compiled: 2025-11-14T12:06:42+0000 :/opt/conda/conda-bld/star_1763121846936/work/source
+Dec 15 22:03:08 ..... started STAR run
+Dec 15 22:03:08 ... starting to generate Genome files
+Dec 15 22:03:48 ..... processing annotations GTF
+Dec 15 22:04:06 ... starting to sort Suffix Array. This may take a long time...
+Dec 15 22:04:24 ... sorting Suffix Array chunks and saving them to disk...
+Dec 15 22:29:58 ... loading chunks from disk, packing SA...
+Dec 15 22:33:39 ... finished generating suffix array
+Dec 15 22:33:39 ... generating Suffix Array index
+Dec 15 22:36:46 ... completed Suffix Array index
+Dec 15 22:36:47 ..... inserting junctions into the genome indices
+Dec 15 22:40:02 ... writing Genome to disk ...
+Dec 15 22:40:12 ... writing Suffix Array to disk ...
+Dec 15 22:41:52 ... writing SAindex to disk
+Dec 15 22:42:02 ..... finished successfully
+STAR genomeGenerate finished successfully
