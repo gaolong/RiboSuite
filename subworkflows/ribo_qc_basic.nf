@@ -5,11 +5,16 @@ include { RPF_LENGTH_QC } from '../modules/rpf_length/main.nf'
 workflow RIBO_QC_BASIC {
 
     take:
-        bam_ch   // tuple(sample_id, sorted.bam)
+        aligned_ch   // tuple(sample_id, bam, bai)
 
     main:
-        rpf_len = RPF_LENGTH_QC(bam_ch)
+        // Explicitly preserve BAM + BAI
+        qc_input = aligned_ch.map { sample_id, bam, bai ->
+            tuple(sample_id, bam, bai)
+        }
+
+        RPF_LENGTH_QC(qc_input)
 
     emit:
-        rpf_len
+        RPF_LENGTH_QC.out
 }

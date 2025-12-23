@@ -5,11 +5,11 @@ include { FASTP } from '../modules/fastp/main.nf'
 workflow QC_FASTP {
 
     take:
-        reads_ch
+        reads_ch   // tuple(sample_id, fastq)
 
     main:
-        trimmed_ch = FASTP(reads_ch)
+        FASTP(reads_ch)
 
     emit:
-        trimmed_ch
+        trimmed_reads = FASTP.out.trimmed_reads
 }

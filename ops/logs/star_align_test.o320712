@@ -1,0 +1,9 @@
+	/data/holwm/home/gaolong/miniforge3/envs/ribo-dev/bin/STAR-avx2 --genomeDir /data/holwm/home/gaolong/projects/RiboSuite/reference/human/GRCh38/star --readFilesIn /data/holwm/home/gaolong/projects/RiboSuite/results/contam_filter_test/SRR1173905.noncontam.fastq.gz --readFilesCommand zcat --runThreadN 8 --outFileNamePrefix /data/holwm/home/gaolong/projects/RiboSuite/results/star_test/SRR1173905. --outSAMtype BAM SortedByCoordinate --outFilterMismatchNmax 2 --alignEndsType EndToEnd
+	STAR version: 2.7.11b   compiled: 2025-11-14T12:06:42+0000 :/opt/conda/conda-bld/star_1763121846936/work/source
+Dec 23 12:41:50 ..... started STAR run
+Dec 23 12:41:50 ..... loading genome
+Dec 23 12:43:18 ..... started mapping
+Dec 23 12:43:24 ..... finished mapping
+Dec 23 12:43:27 ..... started sorting BAM
+Dec 23 12:43:28 ..... finished successfully
+STAR alignment finished

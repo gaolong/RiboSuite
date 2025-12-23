@@ -6,7 +6,7 @@ process RPF_LENGTH_QC {
     conda "bioconda::samtools=1.18"
 
     input:
-        tuple val(sample_id), path(bam)
+        tuple val(sample_id), path(bam), path(bai)
 
     output:
         tuple val(sample_id), path("${sample_id}.rpf_length.tsv")
@@ -14,7 +14,7 @@ process RPF_LENGTH_QC {
     script:
     """
     # Extract read length from BAM
-    samtools view $bam \
+    samtools view ${bam} \
       | awk '{
           len = length(\$10);
           count[len]++
