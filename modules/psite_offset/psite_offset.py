@@ -42,6 +42,7 @@ def main():
     args = parse_args()
 
     bam = pysam.AlignmentFile(args.bam, "rb")
+
     starts = load_start_codons(args.gtf)
 
     # distance counts per read length
