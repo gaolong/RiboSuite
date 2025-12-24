@@ -16,27 +16,108 @@ def parse_args():
     p.add_argument("--out", required=True)
     return p.parse_args()
 
+
 def load_start_codons(gtf):
     """
-    Return list of (chrom, pos, strand) for CDS start codons
+    Parse GTF and return a list of collapsed translation start sites.
+
+    Each returned entry corresponds to ONE unique genomic start site
+    (chrom, start_pos, strand), with all supporting transcripts combined.
+
+    Returns:
+        List of tuples:
+        (chrom, start_pos, strand, gene_names, transcript_ids)
+
+        where gene_names and transcript_ids are comma-separated strings.
     """
-    starts = []
+
+    # Step 1: collect CDSs per transcript
+    cds_by_tx = {}
+
     with open(gtf) as f:
         for line in f:
             if line.startswith("#"):
                 continue
+
             fields = line.rstrip().split("\t")
+            if len(fields) < 9:
+                continue
+
             if fields[2] != "CDS":
                 continue
+
             chrom = fields[0]
-            start = int(fields[3]) - 1
+            start = int(fields[3]) - 1  # GTF is 1-based
             end = int(fields[4]) - 1
             strand = fields[6]
-            if strand == "+":
-                starts.append((chrom, start, strand))
-            else:
-                starts.append((chrom, end, strand))
+
+            # parse attributes into dict
+            attrs = {}
+            for item in fields[8].split(";"):
+                item = item.strip()
+                if not item:
+                    continue
+                key, val = item.split(" ", 1)
+                attrs[key] = val.strip('"')
+
+            tx_id = attrs.get("transcript_id")
+            gene_name = attrs.get("gene_name", "NA")
+
+            if tx_id is None:
+                continue
+
+            if tx_id not in cds_by_tx:
+                cds_by_tx[tx_id] = {
+                    "chrom": chrom,
+                    "strand": strand,
+                    "gene_name": gene_name,
+                    "cds": []
+                }
+
+            cds_by_tx[tx_id]["cds"].append((start, end))
+
+    # Step 2: determine first CDS per transcript
+    # and collapse by (chrom, start_pos, strand)
+    start_dict = {}  # key = (chrom, start_pos, strand)
+
+    for tx_id, info in cds_by_tx.items():
+        chrom = info["chrom"]
+        strand = info["strand"]
+        gene_name = info["gene_name"]
+        cds_list = info["cds"]
+
+        if strand == "+":
+            start_pos = min(cds_list, key=lambda x: x[0])[0]
+        else:
+            start_pos = max(cds_list, key=lambda x: x[1])[1]
+
+        key = (chrom, start_pos, strand)
+
+        if key not in start_dict:
+            start_dict[key] = {
+                "chrom": chrom,
+                "start_pos": start_pos,
+                "strand": strand,
+                "gene_names": set(),
+                "transcript_ids": set()
+            }
+
+        start_dict[key]["gene_names"].add(gene_name)
+        start_dict[key]["transcript_ids"].add(tx_id)
+
+    # Step 3: format output
+    starts = []
+    for v in start_dict.values():
+        starts.append((
+            v["chrom"],
+            v["start_pos"],
+            v["strand"],
+            ",".join(sorted(v["gene_names"])),
+            ",".join(sorted(v["transcript_ids"]))
+        ))
+
     return starts
+
 
 def main():
     args = parse_args()
@@ -49,7 +130,11 @@ def main():
     dist = collections.defaultdict(list)
 
     for chrom, start_pos, strand in starts:
-        for read in bam.fetch(chrom, start_pos - args.window_up, start_pos + args.window_down):
+        for read in bam.fetch(
+            chrom,
+            start_pos - args.window_up,
+            start_pos + args.window_down
+        ):
             if read.is_unmapped:
                 continue
 
@@ -74,9 +159,12 @@ def main():
                 continue
             counter = collections.Counter(dist[L])
             offset, n = counter.most_common(1)[0]
-            out.write(f"{args.sample_id}\t{L}\t{offset}\t{len(dist[L])}\n")
+            out.write(
+                f"{args.sample_id}\t{L}\t{offset}\t{len(dist[L])}\n"
+            )
 
     bam.close()
+
 
 if __name__ == "__main__":
     main()
