@@ -1,10 +1,15 @@
+#!/usr/bin/env python
+
 import pysam
 import argparse
 import collections
 import sys
 
+
 def parse_args():
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(
+        description="Estimate P-site offsets using collapsed CDS start sites"
+    )
     p.add_argument("--bam", required=True)
     p.add_argument("--gtf", required=True)
     p.add_argument("--sample_id", required=True)
@@ -19,7 +24,7 @@ def parse_args():
 
 def load_start_codons(gtf):
     """
-    Parse GTF and return a list of collapsed translation start sites.
+    Parse GTF and return collapsed translation start sites.
 
     Each returned entry corresponds to ONE unique genomic start site
     (chrom, start_pos, strand), with all supporting transcripts combined.
@@ -31,7 +36,9 @@ def load_start_codons(gtf):
         where gene_names and transcript_ids are comma-separated strings.
     """
 
-    # Step 1: collect CDSs per transcript
+    # --------------------------------------------------
+    # Step 1: collect CDS segments per transcript
+    # --------------------------------------------------
     cds_by_tx = {}
 
     with open(gtf) as f:
@@ -51,7 +58,7 @@ def load_start_codons(gtf):
             end = int(fields[4]) - 1
             strand = fields[6]
 
-            # parse attributes into dict
+            # parse attributes
             attrs = {}
             for item in fields[8].split(";"):
                 item = item.strip()
@@ -76,8 +83,10 @@ def load_start_codons(gtf):
 
             cds_by_tx[tx_id]["cds"].append((start, end))
 
+    # --------------------------------------------------
     # Step 2: determine first CDS per transcript
-    # and collapse by (chrom, start_pos, strand)
+    #         and collapse by (chrom, start_pos, strand)
+    # --------------------------------------------------
     start_dict = {}  # key = (chrom, start_pos, strand)
 
     for tx_id, info in cds_by_tx.items():
@@ -105,7 +114,9 @@ def load_start_codons(gtf):
         start_dict[key]["gene_names"].add(gene_name)
         start_dict[key]["transcript_ids"].add(tx_id)
 
+    # --------------------------------------------------
     # Step 3: format output
+    # --------------------------------------------------
     starts = []
     for v in start_dict.values():
         starts.append((
@@ -129,7 +140,7 @@ def main():
     # distance counts per read length
     dist = collections.defaultdict(list)
 
-    for chrom, start_pos, strand in starts:
+    for chrom, start_pos, strand, gene_names, transcript_ids in starts:
         for read in bam.fetch(
             chrom,
             start_pos - args.window_up,
