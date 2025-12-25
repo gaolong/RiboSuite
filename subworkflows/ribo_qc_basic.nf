@@ -1,24 +1,39 @@
 nextflow.enable.dsl=2
 
-include { RPF_LENGTH_QC } from '../modules/rpf_length/main.nf'
-include { PSITE_OFFSET }   from '../modules/psite_offset/main.nf'
+include { RPF_LENGTH_QC }        from '../modules/rpf_length/main.nf'
+include { PSITE_OFFSET }         from '../modules/psite_offset/main.nf'
+include { FRAME_PERIODICITY_QC } from '../modules/frame_periodicity/main.nf'
 
 workflow RIBO_QC_BASIC {
 
     take:
-        aligned_ch   // tuple(sample_id, bam)
-        gtf
+        aligned_ch   // tuple(sample_id, bam, bai)
+        gtf          // path to GTF file
 
     main:
-        // preserve tuple shape explicitly
-        qc_input = aligned_ch.map { sample_id, bam ->
-            tuple(sample_id, bam)
-        }
 
-        RPF_LENGTH_QC(qc_input)
-        PSITE_OFFSET(qc_input, gtf)
+        /*
+         * 1) Read-length QC
+         * Consumes (sample_id, bam, bai)
+         * bai is staged but not used
+         */
+        RPF_LENGTH_QC(aligned_ch)
+
+        /*
+         * 2) P-site offset
+         * Consumes (sample_id, bam, bai) + gtf
+         * Emits (sample_id, bam, bai, psite_offsets.tsv)
+         */
+        PSITE_OFFSET(aligned_ch, gtf)
+
+        /*
+         * 3) Frame periodicity QC
+         * Consumes (sample_id, bam, bai, psite_offsets.tsv) + gtf
+         */
+        FRAME_PERIODICITY_QC(PSITE_OFFSET.out, gtf)
 
     emit:
         RPF_LENGTH_QC.out
         PSITE_OFFSET.out
+        FRAME_PERIODICITY_QC.out
 }
