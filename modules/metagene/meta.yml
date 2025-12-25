@@ -1,0 +1,20 @@
+name: metagene_qc
+description: "Metagene QC around CDS start/stop using a P-site shifted BAM."
+keywords:
+  - riboseq
+  - metagene
+  - qc
+  - psite
+tools:
+  - pysam
+  - pandas
+  - numpy
+  - matplotlib
+input:
+  - bam: "P-site shifted BAM (read start is P-site)"
+  - bai: "BAM index"
+  - gtf: "Gene annotation GTF"
+output:
+  - start_tsv: "Relative position counts around CDS start boundary"
+  - stop_tsv: "Relative position counts around CDS stop boundary"
+  - png: "Overlay plot of start/stop metagene profiles"
