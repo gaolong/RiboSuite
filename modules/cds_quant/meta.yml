@@ -1,0 +1,16 @@
+name: cds_quant
+description: >
+  CDS-level P-site quantification using on-the-fly P-site inference.
+  No intermediate P-site BAM files are generated.
+keywords:
+  - riboseq
+  - cds
+  - psite
+  - quantification
+input:
+  - bam
+  - psite offsets
+  - gtf
+output:
+  - transcript-level CDS P-site counts
+  - gene-level CDS P-site counts
