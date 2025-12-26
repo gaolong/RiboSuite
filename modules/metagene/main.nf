@@ -2,7 +2,7 @@ process METAGENE_QC {
     tag "$sample_id"
     label 'small'
 
-    conda "bioconda::pysam=0.22.0 bioconda::htslib=1.20 bioconda::samtools=1.20 conda-forge::python=3.11 conda-forge::pandas=2.2.2 conda-forge::numpy=2.0.1 conda-forge::matplotlib=3.9.1"
+    conda "bioconda::pysam=0.22.0 bioconda::htslib=1.20 bioconda::samtools=1.20 conda-forge::python=3.10 conda-forge::pandas=2.2.2 conda-forge::numpy=2.0.1 conda-forge::matplotlib=3.9.1"
 
     input:
     tuple val(sample_id), path(bam), path(bai)
@@ -16,7 +16,7 @@ process METAGENE_QC {
 
     script:
     """
-    python ${projectDir}/modules/metagene/metagene.py \
+    python ${moduleDir}/metagene.py \
       --bam ${bam} \
       --gtf ${gtf} \
       --sample ${sample_id} \

@@ -3,6 +3,8 @@ nextflow.enable.dsl=2
 include { RPF_LENGTH_QC }        from '../modules/rpf_length/main.nf'
 include { PSITE_OFFSET }         from '../modules/psite_offset/main.nf'
 include { FRAME_PERIODICITY_QC } from '../modules/frame_periodicity/main.nf'
+include { METAGENE_QC }          from '../modules/metagene/main.nf'
+
 
 workflow RIBO_QC_BASIC {
 
@@ -32,8 +34,21 @@ workflow RIBO_QC_BASIC {
          */
         FRAME_PERIODICITY_QC(PSITE_OFFSET.out, gtf)
 
+        /*
+         * 4) Metagene QC
+         * Uses P-site–corrected BAM
+         */
+        METAGENE_QC(
+            PSITE_OFFSET.out.map { sample_id, bam, bai, offsets ->
+                tuple(sample_id, bam, bai)
+            },
+            gtf
+        )
+
     emit:
         RPF_LENGTH_QC.out
         PSITE_OFFSET.out
         FRAME_PERIODICITY_QC.out
+        METAGENE_QC.out
 }
+  
