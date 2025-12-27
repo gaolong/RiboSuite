@@ -3,6 +3,7 @@ nextflow.enable.dsl=2
 include { BOWTIE2_FILTER }      from '../modules/bowtie2/main.nf'
 include { STAR_ALIGN }          from '../modules/star/main.nf'
 include { SAMTOOLS_SORT_INDEX } from '../modules/samtools/main.nf'
+include { UMI_DEDUP }           from '../modules/umi_dedup/main.nf'
 
 workflow ALIGN_RIBO {
 
@@ -24,9 +25,14 @@ workflow ALIGN_RIBO {
             star_index
         )
 
-        // Sort & index BAM
+        // Sort & index BAM (STAR -> coordinate-sorted BAM)
         sorted = SAMTOOLS_SORT_INDEX(aligned)
 
+        // Optional UMI-aware deduplication
+        final_bam = params.enable_umi \
+            ? UMI_DEDUP(sorted) \
+            : sorted
+
     emit:
-        sorted
+        final_bam
 }

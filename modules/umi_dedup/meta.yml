@@ -1,0 +1,17 @@
+name: umi_dedup
+description: >
+  UMI-aware PCR duplicate removal on coordinate-sorted BAM files
+  using umi_tools.
+keywords:
+  - UMI
+  - deduplication
+  - PCR duplicates
+tools:
+  - umi_tools
+  - samtools
+input:
+  - bam: Coordinate-sorted BAM with UMI in read name
+output:
+  - umi_dedup.bam: Deduplicated BAM
+  - umi_dedup.bam.bai: BAM index
+  - umi_dedup.log: Deduplication log
