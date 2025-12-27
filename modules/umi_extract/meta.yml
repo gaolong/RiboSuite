@@ -1,0 +1,15 @@
+name: umi_extract
+description: >
+  Extract unique molecular identifiers (UMIs) from raw FASTQ reads
+  and append them to read names using umi_tools.
+keywords:
+  - UMI
+  - extraction
+  - PCR duplicate removal
+tools:
+  - umi_tools
+input:
+  - fastq: Raw single-end FASTQ(.gz)
+output:
+  - umi_fastq: FASTQ with UMI moved to read name
+  - log: UMI extraction log
