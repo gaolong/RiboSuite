@@ -57,3 +57,10 @@ reference/
 
 # SRA toolkit
 *.sra
+
+# logs
+ops/logs/
+
+# notebooks
+.ipynb_checkpoints/
+*.ipynb
