@@ -15,11 +15,19 @@ process FASTP {
     path "${sample_id}.fastp.html", emit: fastp_html
 
     script:
+    // Adapter logic:
+    // - If user provides adapter_sequence → force trimming
+    // - Else → rely on fastp auto-detection
+    def adapter_arg = params.adapter_sequence \
+        ? "--adapter_sequence ${params.adapter_sequence}" \
+        : ""
+
     """
     fastp \
       -i ${reads} \
       -o ${sample_id}.trimmed.fastq.gz \
       -j ${sample_id}.fastp.json \
-      -h ${sample_id}.fastp.html
+      -h ${sample_id}.fastp.html \
+      ${adapter_arg}
     """
 }
