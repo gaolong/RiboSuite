@@ -1,3 +1,5 @@
+nextflow.enable.dsl=2
+
 process UMI_EXTRACT {
 
     tag "$sample_id"
@@ -5,20 +7,22 @@ process UMI_EXTRACT {
     conda "bioconda::umi_tools=1.1.4"
 
     input:
-    tuple val(sample_id), path(reads)
+    tuple val(sample_id), path(reads), val(bc_pattern)
 
     output:
     tuple val(sample_id),
           path("${sample_id}.umi.fastq.gz"),
-          path("${sample_id}.umi_extract.log")
+          emit: umi_fastq
+
+    path "${sample_id}.umi_extract.log", emit: umi_log
 
     script:
     """
     set -euo pipefail
 
     umi_tools extract \
-      --extract-method ${params.umi_extract_method} \
-      --bc-pattern '${params.umi_bc_pattern}' \
+      --extract-method=regex \
+      --bc-pattern='${bc_pattern}' \
       --stdin ${reads} \
       --stdout ${sample_id}.umi.fastq.gz \
       --log ${sample_id}.umi_extract.log

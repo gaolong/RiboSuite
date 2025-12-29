@@ -7,18 +7,21 @@ process CUTADAPT_TRIM {
     conda "bioconda::cutadapt=4.9"
 
     input:
-    tuple val(sample_id), path(reads)
+    tuple val(sample_id), path(reads), val(adapter), val(bc_pattern)
 
     output:
-    tuple val(sample_id), path("${sample_id}.trimmed.fastq.gz"), emit: trimmed_reads
+    tuple val(sample_id),
+          path("${sample_id}.trimmed.fastq.gz"),
+          val(bc_pattern),
+          emit: trimmed_reads
+
     path "${sample_id}.cutadapt.log", emit: cutadapt_log
 
     script:
     """
     cutadapt \
-      -a ${params.adapter_sequence} \
-      -m ${params.min_length} \
-      -M ${params.max_length} \
+      -a ${adapter} \
+      -a "G{10}" \
       -o ${sample_id}.trimmed.fastq.gz \
       ${reads} \
       > ${sample_id}.cutadapt.log

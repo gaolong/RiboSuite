@@ -9,7 +9,12 @@ workflow TEST_PREPROCESS {
             .fromPath(params.samples)
             .splitCsv(header:true, sep:'\t')
             .map { row ->
-                tuple(row['sample_id'], file(row['fastq']))
+                tuple(
+                    row.sample_id,
+                    file(row.fastq),
+                    row.adapter,
+                    row.bc_pattern
+                )
             }
             .set { reads_ch }
 
