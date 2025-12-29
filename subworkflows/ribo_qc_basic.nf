@@ -46,9 +46,9 @@ workflow RIBO_QC_BASIC {
         )
 
     emit:
-        RPF_LENGTH_QC.out
-        PSITE_OFFSET.out
-        FRAME_PERIODICITY_QC.out
-        METAGENE_QC.out
+        rpf_length_qc        = RPF_LENGTH_QC.out
+        psite_offset_qc      = PSITE_OFFSET.out
+        frame_periodicity_qc = FRAME_PERIODICITY_QC.out
+        metagene_qc          = METAGENE_QC.out
 }
   

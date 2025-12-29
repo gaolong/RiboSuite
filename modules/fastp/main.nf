@@ -10,24 +10,19 @@ process FASTP {
     tuple val(sample_id), path(reads)
 
     output:
-    tuple val(sample_id), path("${sample_id}.trimmed.fastq.gz"), emit: trimmed_reads
     path "${sample_id}.fastp.json", emit: fastp_json
     path "${sample_id}.fastp.html", emit: fastp_html
+    path "${sample_id}.fastp.fastq.gz", emit: fastp_fastq
 
     script:
-    // Adapter logic:
-    // - If user provides adapter_sequence → force trimming
-    // - Else → rely on fastp auto-detection
-    def adapter_arg = params.adapter_sequence \
-        ? "--adapter_sequence ${params.adapter_sequence}" \
-        : ""
-
     """
     fastp \
       -i ${reads} \
-      -o ${sample_id}.trimmed.fastq.gz \
+      -o ${sample_id}.fastp.fastq.gz \
+      --disable_adapter_trimming \
+      --disable_quality_filtering \
+      --disable_length_filtering \
       -j ${sample_id}.fastp.json \
-      -h ${sample_id}.fastp.html \
-      ${adapter_arg}
+      -h ${sample_id}.fastp.html
     """
 }
