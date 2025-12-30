@@ -4,8 +4,6 @@ process STAR_ALIGN {
 
     tag "$sample_id"
 
-    cpus   { params.star_cpus ?: 1 }
-    memory { params.star_memory ?: '32 GB' }
 
     conda "bioconda::star=2.7.11b"
 

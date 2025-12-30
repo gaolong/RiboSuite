@@ -3,7 +3,6 @@ nextflow.enable.dsl=2
 process BOWTIE2_FILTER {
 
     tag "$sample_id"
-    cpus 1
     conda "bioconda::bowtie2=2.5.2"
 
     input:
