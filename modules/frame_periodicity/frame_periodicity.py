@@ -3,6 +3,7 @@
 import pysam
 import argparse
 import pandas as pd
+import matplotlib.pyplot as plt
 from collections import defaultdict
 import re
 
@@ -11,7 +12,7 @@ import re
 # --------------------------------------------------
 def parse_args():
     ap = argparse.ArgumentParser(
-        description="Fast start-window frame periodicity (protein-coding, longest CDS per gene)"
+        description="Frame periodicity by region (5UTR/CDS/3UTR) with CDS start-window logic preserved"
     )
     ap.add_argument("--bam", required=True)
     ap.add_argument("--gtf", required=True)
@@ -22,13 +23,11 @@ def parse_args():
                     help="Start window relative to CDS start (nt), e.g. -30,10")
     ap.add_argument("--min_cds_len", type=int, default=150,
                     help="Minimum CDS length to keep transcript")
-    ap.add_argument("--min_start_reads", type=int, default=0,
-                    help="Minimum reads in start window to keep gene (0 disables)")
 
     return ap.parse_args()
 
 # --------------------------------------------------
-# Offsets
+# offsets
 # --------------------------------------------------
 def load_offsets(path):
     df = pd.read_csv(path, sep="\t")
@@ -41,20 +40,13 @@ def load_offsets(path):
 def parse_attrs(attr):
     return dict(re.findall(r'(\S+)\s+"([^"]+)"', attr))
 
-def load_longest_cds_per_gene(gtf, min_cds_len):
+def load_longest_tx_models(gtf, min_cds_len):
     """
-    Returns:
-      cds_models: list of dicts:
-        {
-          chrom, strand, gene_id,
-          cds_exons: [(start,end,phase)],
-          cds_len,
-          cds_start
-        }
+    One protein-coding transcript (longest CDS) per gene.
     """
     tx_cds = defaultdict(list)
-    tx_gene = {}
-    tx_gene_type = {}
+    tx_bounds = {}
+    gene_type = {}
 
     with open(gtf) as f:
         for line in f:
@@ -64,28 +56,31 @@ def load_longest_cds_per_gene(gtf, min_cds_len):
             attrs = parse_attrs(attr)
 
             if feature == "gene":
-                tx_gene_type[attrs["gene_id"]] = attrs.get("gene_type") or attrs.get("gene_biotype")
+                gene_type[attrs["gene_id"]] = attrs.get("gene_type") or attrs.get("gene_biotype")
 
-            if feature != "CDS":
+            if feature not in ("exon", "CDS"):
                 continue
 
             gene = attrs.get("gene_id")
             tx = attrs.get("transcript_id")
-            if gene is None or tx is None:
+            if not gene or not tx:
                 continue
 
             start0 = int(start) - 1
             end0 = int(end)
-            ph = 0 if phase == "." else int(phase)
 
-            tx_cds[(gene, tx, chrom, strand)].append((start0, end0, ph))
-            tx_gene[tx] = gene
+            tx_bounds.setdefault((gene, tx, chrom, strand), [start0, end0])
+            tx_bounds[(gene, tx, chrom, strand)][0] = min(tx_bounds[(gene, tx, chrom, strand)][0], start0)
+            tx_bounds[(gene, tx, chrom, strand)][1] = max(tx_bounds[(gene, tx, chrom, strand)][1], end0)
 
-    # choose longest CDS transcript per gene
+            if feature == "CDS":
+                ph = 0 if phase == "." else int(phase)
+                tx_cds[(gene, tx, chrom, strand)].append((start0, end0, ph))
+
     best = {}
 
     for (gene, tx, chrom, strand), exons in tx_cds.items():
-        if tx_gene_type.get(gene) != "protein_coding":
+        if gene_type.get(gene) != "protein_coding":
             continue
 
         exons.sort(key=lambda x: x[0])
@@ -95,27 +90,30 @@ def load_longest_cds_per_gene(gtf, min_cds_len):
 
         if gene not in best or cds_len > best[gene]["cds_len"]:
             cds_start = exons[0][0] if strand == "+" else exons[-1][1] - 1
+            cds_end = exons[-1][1] - 1 if strand == "+" else exons[0][0]
+            tx_start, tx_end = tx_bounds[(gene, tx, chrom, strand)]
+
             best[gene] = {
                 "chrom": chrom,
                 "strand": strand,
-                "gene_id": gene,
                 "cds_exons": exons,
-                "cds_len": cds_len,
-                "cds_start": cds_start
+                "cds_start": cds_start,
+                "cds_end": cds_end,
+                "tx_start": tx_start,
+                "tx_end": tx_end,
+                "cds_len": cds_len
             }
 
     return list(best.values())
 
 # --------------------------------------------------
-# Build spliced start-window segments
+# utilities
 # --------------------------------------------------
-def build_start_window_segments(cds_exons, cds_start, strand, wL, wR):
-    """
-    Map transcript-relative start window onto genomic CDS exons.
-    Returns list of (start,end,phase).
-    """
-    segs = []
+def frame_from_cds_start(psite, cds_start, strand):
+    return (psite - cds_start) % 3 if strand == "+" else (cds_start - psite) % 3
 
+def build_start_window_segments(cds_exons, cds_start, strand, wL, wR):
+    segs = []
     if strand == "+":
         cursor = cds_start + wL
         remaining = wR - wL + 1
@@ -146,74 +144,166 @@ def build_start_window_segments(cds_exons, cds_start, strand, wL, wR):
                 cursor -= take
             if remaining <= 0:
                 break
-
     return segs
 
 # --------------------------------------------------
-# Frame calculation
-# --------------------------------------------------
-def frame_with_phase(psite, s, e, ph, strand):
-    if strand == "+":
-        return (psite - s + ph) % 3
-    else:
-        return ((e - 1 - psite) + ph) % 3
-
-# --------------------------------------------------
-# Main
+# main
 # --------------------------------------------------
 def main():
     args = parse_args()
     offsets = load_offsets(args.offset)
     wL, wR = map(int, args.start_window.split(","))
 
-    cds_models = load_longest_cds_per_gene(args.gtf, args.min_cds_len)
-
+    models = load_longest_tx_models(args.gtf, args.min_cds_len)
     bam = pysam.AlignmentFile(args.bam, "rb")
 
     counts = defaultdict(int)
 
-    for m in cds_models:
-        segs = build_start_window_segments(
-            m["cds_exons"], m["cds_start"], m["strand"], wL, wR
+    for m in models:
+        chrom, strand = m["chrom"], m["strand"]
+
+        # ---------- CDS (START WINDOW ONLY, UNCHANGED LOGIC) ----------
+        cds_segs = build_start_window_segments(
+            m["cds_exons"], m["cds_start"], strand, wL, wR
         )
 
-        gene_reads = 0
-
-        for s, e, ph in segs:
-            for read in bam.fetch(m["chrom"], s, e):
+        for s, e, ph in cds_segs:
+            for read in bam.fetch(chrom, s, e):
                 if read.is_unmapped:
                     continue
                 rl = read.query_length
                 if rl not in offsets:
                     continue
-
-                offset = offsets[rl]
                 psite = (
-                    read.reference_start + offset
-                    if m["strand"] == "+"
-                    else read.reference_end - offset - 1
+                    read.reference_start + offsets[rl]
+                    if strand == "+"
+                    else read.reference_end - offsets[rl] - 1
                 )
-
                 if not (s <= psite < e):
                     continue
+                frame = frame_from_cds_start(psite, m["cds_start"], strand)
+                counts[("CDS", rl, frame)] += 1
 
-                frame = frame_with_phase(psite, s, e, ph, m["strand"])
-                counts[(rl, frame)] += 1
-                gene_reads += 1
+        # ---------- 5UTR ----------
+        utr5 = (
+            (m["tx_start"], m["cds_start"])
+            if strand == "+"
+            else (m["cds_start"] + 1, m["tx_end"])
+        )
+        if utr5[0] < utr5[1]:
+            for read in bam.fetch(chrom, utr5[0], utr5[1]):
+                if read.is_unmapped:
+                    continue
+                rl = read.query_length
+                if rl not in offsets:
+                    continue
+                psite = (
+                    read.reference_start + offsets[rl]
+                    if strand == "+"
+                    else read.reference_end - offsets[rl] - 1
+                )
+                if not (utr5[0] <= psite < utr5[1]):
+                    continue
+                frame = frame_from_cds_start(psite, m["cds_start"], strand)
+                counts[("5UTR", rl, frame)] += 1
 
-        if args.min_start_reads and gene_reads < args.min_start_reads:
-            continue
+        # ---------- 3UTR ----------
+        utr3 = (
+            (m["cds_end"] + 1, m["tx_end"])
+            if strand == "+"
+            else (m["tx_start"], m["cds_end"])
+        )
+        if utr3[0] < utr3[1]:
+            for read in bam.fetch(chrom, utr3[0], utr3[1]):
+                if read.is_unmapped:
+                    continue
+                rl = read.query_length
+                if rl not in offsets:
+                    continue
+                psite = (
+                    read.reference_start + offsets[rl]
+                    if strand == "+"
+                    else read.reference_end - offsets[rl] - 1
+                )
+                if not (utr3[0] <= psite < utr3[1]):
+                    continue
+                frame = frame_from_cds_start(psite, m["cds_start"], strand)
+                counts[("3UTR", rl, frame)] += 1
 
-    # output
+    # --------------------------------------------------
+    # table
+    # --------------------------------------------------
     rows = [
-        {"sample": args.sample, "read_length": rl, "frame": fr, "count": c}
-        for (rl, fr), c in counts.items()
+        {
+            "sample": args.sample,
+            "region": region,
+            "read_length": rl,
+            "frame": fr,
+            "count": c
+        }
+        for (region, rl, fr), c in counts.items()
     ]
 
-    df = pd.DataFrame(rows).sort_values(["read_length", "frame"])
-    df["fraction"] = df["count"] / df.groupby("read_length")["count"].transform("sum")
+    df = pd.DataFrame(rows)
+    df["fraction"] = df["count"] / df.groupby(
+        ["region", "read_length"]
+    )["count"].transform("sum")
 
-    df.to_csv(f"{args.sample}.periodicity.by_region_by_length.tsv", sep="\t", index=False)
+    out_tsv = f"{args.sample}.periodicity.by_region_by_length.tsv"
+    df.to_csv(out_tsv, sep="\t", index=False)
+
+    # --------------------------------------------------
+    # heatmaps (3 panels, frame 0/1/2)
+    # --------------------------------------------------
+    fig, axes = plt.subplots(1, 3, figsize=(12, 5), sharey=True)
+    regions = ["5UTR", "CDS", "3UTR"]
+
+    title_map = {
+        "5UTR": "5' UTR",
+        "CDS": "CDS",
+        "3UTR": "3' UTR"
+    }
+
+    for ax, region in zip(axes, regions):
+        sub = df[df["region"] == region]
+        mat = (
+            sub.pivot(index="read_length", columns="frame", values="fraction")
+            .fillna(0)
+            .sort_index()
+        )
+        im = ax.imshow(
+            mat,
+            aspect="auto",
+            origin="lower",
+            cmap="Reds",
+            vmin=0,
+            vmax=1
+        )
+        ax.set_title(title_map[region])
+        ax.set_xticks([0, 1, 2])
+        ax.set_xticklabels(["Frame 0", "Frame 1", "Frame 2"])
+        ax.set_yticks(range(len(mat.index)))
+        ax.set_yticklabels(mat.index)
+
+    # shared y-axis label
+    fig.text(0.04, 0.5, "Read length", va="center", rotation="vertical")
+
+    # dedicated colorbar axis
+    # dedicated colorbar axis
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_label("P-site fraction", rotation=270, labelpad=12)
+    cbar.ax.yaxis.label.set_verticalalignment("center")
+
+    fig.suptitle(f"{args.sample} frame periodicity by region")
+    plt.subplots_adjust(wspace=0.25, right=0.9)
+    fig.savefig(
+        f"{args.sample}.periodicity.by_region_by_length.heatmap.png",
+        dpi=150
+    )
+    plt.close()
+
+
 
 if __name__ == "__main__":
     main()
