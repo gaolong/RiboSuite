@@ -3,12 +3,11 @@
 import pysam
 import argparse
 import collections
-import sys
 
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Estimate P-site offsets using collapsed CDS start sites"
+        description="Estimate P-site offsets using CDS start sites (mode-based)"
     )
     p.add_argument("--bam", required=True)
     p.add_argument("--gtf", required=True)
@@ -22,23 +21,24 @@ def parse_args():
     return p.parse_args()
 
 
+def parse_gtf_attributes(attr_str):
+    attrs = {}
+    for item in attr_str.split(";"):
+        item = item.strip()
+        if not item:
+            continue
+        key, val = item.split(" ", 1)
+        attrs[key] = val.strip('"')
+    return attrs
+
+
 def load_start_codons(gtf):
     """
-    Parse GTF and return collapsed translation start sites.
-
-    Each returned entry corresponds to ONE unique genomic start site
-    (chrom, start_pos, strand), with all supporting transcripts combined.
-
-    Returns:
-        List of tuples:
-        (chrom, start_pos, strand, gene_names, transcript_ids)
-
-        where gene_names and transcript_ids are comma-separated strings.
+    Original behavior:
+    - use CDS features
+    - collapse transcripts sharing the same genomic start
     """
 
-    # --------------------------------------------------
-    # Step 1: collect CDS segments per transcript
-    # --------------------------------------------------
     cds_by_tx = {}
 
     with open(gtf) as f:
@@ -47,47 +47,29 @@ def load_start_codons(gtf):
                 continue
 
             fields = line.rstrip().split("\t")
-            if len(fields) < 9:
-                continue
-
-            if fields[2] != "CDS":
+            if len(fields) < 9 or fields[2] != "CDS":
                 continue
 
             chrom = fields[0]
-            start = int(fields[3]) - 1  # GTF is 1-based
+            start = int(fields[3]) - 1
             end = int(fields[4]) - 1
             strand = fields[6]
 
-            # parse attributes
-            attrs = {}
-            for item in fields[8].split(";"):
-                item = item.strip()
-                if not item:
-                    continue
-                key, val = item.split(" ", 1)
-                attrs[key] = val.strip('"')
-
+            attrs = parse_gtf_attributes(fields[8])
             tx_id = attrs.get("transcript_id")
             gene_name = attrs.get("gene_name", "NA")
 
             if tx_id is None:
                 continue
 
-            if tx_id not in cds_by_tx:
-                cds_by_tx[tx_id] = {
-                    "chrom": chrom,
-                    "strand": strand,
-                    "gene_name": gene_name,
-                    "cds": []
-                }
+            cds_by_tx.setdefault(tx_id, {
+                "chrom": chrom,
+                "strand": strand,
+                "gene_name": gene_name,
+                "cds": []
+            })["cds"].append((start, end))
 
-            cds_by_tx[tx_id]["cds"].append((start, end))
-
-    # --------------------------------------------------
-    # Step 2: determine first CDS per transcript
-    #         and collapse by (chrom, start_pos, strand)
-    # --------------------------------------------------
-    start_dict = {}  # key = (chrom, start_pos, strand)
+    start_dict = {}
 
     for tx_id, info in cds_by_tx.items():
         chrom = info["chrom"]
@@ -102,21 +84,17 @@ def load_start_codons(gtf):
 
         key = (chrom, start_pos, strand)
 
-        if key not in start_dict:
-            start_dict[key] = {
-                "chrom": chrom,
-                "start_pos": start_pos,
-                "strand": strand,
-                "gene_names": set(),
-                "transcript_ids": set()
-            }
+        start_dict.setdefault(key, {
+            "chrom": chrom,
+            "start_pos": start_pos,
+            "strand": strand,
+            "gene_names": set(),
+            "transcript_ids": set()
+        })
 
         start_dict[key]["gene_names"].add(gene_name)
         start_dict[key]["transcript_ids"].add(tx_id)
 
-    # --------------------------------------------------
-    # Step 3: format output
-    # --------------------------------------------------
     starts = []
     for v in start_dict.values():
         starts.append((
@@ -134,44 +112,67 @@ def main():
     args = parse_args()
 
     bam = pysam.AlignmentFile(args.bam, "rb")
-
     starts = load_start_codons(args.gtf)
 
-    # distance counts per read length
+    # store distance = (CDS_start - read_5p)
     dist = collections.defaultdict(list)
 
-    for chrom, start_pos, strand, gene_names, transcript_ids in starts:
+    for chrom, start_pos, strand, _, _ in starts:
         for read in bam.fetch(
             chrom,
             start_pos - args.window_up,
             start_pos + args.window_down
         ):
-            if read.is_unmapped:
+            if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
 
-            read_len = read.query_length
-            if read_len < args.min_len or read_len > args.max_len:
+            L = read.query_length
+            if L < args.min_len or L > args.max_len:
                 continue
 
+            # correct 5′ end of the read
+            read_5p = read.reference_end - 1 if read.is_reverse else read.reference_start
+
+            # enforce strand consistency
+            if read.is_reverse != (strand == "-"):
+                continue
+
+            # distance from CDS start to read 5′ end (transcript direction)
             if strand == "+":
-                read_5p = read.reference_start
                 rel = read_5p - start_pos
             else:
-                read_5p = read.reference_end - 1
                 rel = start_pos - read_5p
 
             if -args.window_up <= rel <= args.window_down:
-                dist[read_len].append(-rel)
+                dist[L].append(-rel)  # IMPORTANT: keep sign convention
 
     with open(args.out, "w") as out:
-        out.write("sample_id\tread_length\tpsite_offset\tn_reads\n")
+        out.write("sample_id\tread_length\tpsite_offset\tn_reads\tframe0_frac\n")
+
         for L in sorted(dist):
             if len(dist[L]) < args.min_reads:
                 continue
+
             counter = collections.Counter(dist[L])
-            offset, n = counter.most_common(1)[0]
+            offset = counter.most_common(1)[0][0]
+
+            # compute frame-0 fraction using chosen offset
+            f0 = f1 = f2 = 0
+            for d in dist[L]:
+                # P-site relative to CDS start = offset - d
+                frame = (offset - d) % 3
+                if frame == 0:
+                    f0 += 1
+                elif frame == 1:
+                    f1 += 1
+                else:
+                    f2 += 1
+
+            total = f0 + f1 + f2
+            frame0_frac = f0 / total if total > 0 else 0.0
+
             out.write(
-                f"{args.sample_id}\t{L}\t{offset}\t{len(dist[L])}\n"
+                f"{args.sample_id}\t{L}\t{offset}\t{len(dist[L])}\t{frame0_frac:.3f}\n"
             )
 
     bam.close()
