@@ -1,28 +1,33 @@
-nextflow.enable.dsl=2
+nextflow.enable.dsl = 2
 
 process FASTP {
 
-    tag "$sample_id"
+    tag "${meta.sample_id}"
 
     conda "bioconda::fastp=0.23.4"
 
     input:
-    tuple val(sample_id), path(reads)
+    tuple val(meta), path(read1), path(read2)
 
     output:
-    path "${sample_id}.fastp.json", emit: fastp_json
-    path "${sample_id}.fastp.html", emit: fastp_html
-    path "${sample_id}.fastp.fastq.gz", emit: fastp_fastq
+    tuple val(meta),
+          path("${meta.sample_id}_R1.fastp.fq.gz"),
+          path("${meta.sample_id}_R2.fastp.fq.gz"),
+          emit: reads
+
+    path "${meta.sample_id}.fastp.json", emit: json
+    path "${meta.sample_id}.fastp.html", emit: html
 
     script:
     """
     fastp \
-      -i ${reads} \
-      -o ${sample_id}.fastp.fastq.gz \
-      --disable_adapter_trimming \
-      --disable_quality_filtering \
-      --disable_length_filtering \
-      -j ${sample_id}.fastp.json \
-      -h ${sample_id}.fastp.html
+      --in1 ${read1} \
+      --in2 ${read2} \
+      --out1 ${meta.sample_id}_R1.fastp.fq.gz \
+      --out2 ${meta.sample_id}_R2.fastp.fq.gz \
+      --detect_adapter_for_pe \
+      --thread ${task.cpus} \
+      --json ${meta.sample_id}.fastp.json \
+      --html ${meta.sample_id}.fastp.html
     """
 }

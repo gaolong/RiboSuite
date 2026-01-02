@@ -1,6 +1,5 @@
-include { STAR } from '../modules/star/main.nf'
-include { SAMTOOLS_SORT } from '../modules/samtools/sort/main.nf'
-include { SAMTOOLS_INDEX } from '../modules/samtools/index/main.nf'
+include { STAR_RNA_ALIGN }  from '../modules/star_rna/main.nf'
+include { SAMTOOLS_INDEX }  from '../modules/samtools/index/main.nf'
 
 workflow ALIGN_RNA {
 
@@ -8,8 +7,17 @@ workflow ALIGN_RNA {
     reads_ch
 
     main:
-    reads_ch | STAR | SAMTOOLS_SORT | SAMTOOLS_INDEX
+    /*
+     * STAR requires TWO inputs:
+     *  1) reads_ch
+     *  2) star index
+     */
+    STAR_RNA_ALIGN(reads_ch, params.star_index)
+
+    SAMTOOLS_INDEX(STAR_RNA_ALIGN.out.bam)
 
     emit:
-    SAMTOOLS_INDEX.out as aligned_bam
+    SAMTOOLS_INDEX.out
+    STAR_RNA_ALIGN.out.gene_counts
+    STAR_RNA_ALIGN.out.log
 }

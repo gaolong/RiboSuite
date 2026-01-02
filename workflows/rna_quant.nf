@@ -1,64 +1,28 @@
-#!/usr/bin/env nextflow
-
-nextflow.enable.dsl=2
-
-/*
- * RNA-seq quantification workflow
- * - raw QC
- * - trimming
- * - STAR alignment
- * - gene-level quantification
- */
-
-include { RNA_QC_RAW }      from '../subworkflows/rna_qc_raw.nf'
-include { RNA_TRIM_READS }  from '../subworkflows/rna_trim_reads.nf'
-include { ALIGN_RNA }       from '../subworkflows/align_rna.nf'
-include { FEATURECOUNTS }   from '../modules/subread/featurecounts/main.nf'
-
+include { RNA_PREPROCESS } from './rna_preprocess.nf'
+include { ALIGN_RNA }      from '../subworkflows/align_rna.nf'
 
 workflow RNA_QUANT {
 
-    /*
-     * Input:
-     *   samplesheet with sample_id + fastq_1 (+ fastq_2 optional)
-     */
     main:
 
     /*
-     * Parse samplesheet
-     * Expected output:
-     *   tuple(meta, reads)
-     *     meta.sample_id
-     *     reads = [fq] or [fq1, fq2]
+     * Run RNA preprocessing (fastp)
+     * RNA_PREPROCESS emits:
+     *   - reads
+     *   - html
+     *   - json
      */
-    reads_ch = Channel
-        .fromPath(params.samplesheet)
-        | parseSamplesheet
-
+    RNA_PREPROCESS()
 
     /*
-     * 1. Raw QC (FastQC only, non-destructive)
+     * Extract ONLY the trimmed reads channel
      */
-    qc_out = RNA_QC_RAW(reads_ch)
-
+    trimmed_reads_ch = RNA_PREPROCESS.out[0]
+    // or equivalently:
+    // trimmed_reads_ch = RNA_PREPROCESS.out.reads
 
     /*
-     * 2. Adapter trimming
+     * Align RNA-seq reads with STAR
      */
-    trimmed_ch = RNA_TRIM_READS(qc_out.reads_raw)
-
-
-    /*
-     * 3. Alignment (STAR → sort → index)
-     */
-    aligned_ch = ALIGN_RNA(trimmed_ch.trimmed_reads)
-
-
-    /*
-     * 4. Gene-level quantification
-     */
-    FEATURECOUNTS(
-        aligned_ch.aligned_bam,
-        params.gtf
-    )
+    ALIGN_RNA(trimmed_reads_ch)
 }
