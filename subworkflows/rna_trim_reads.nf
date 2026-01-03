@@ -1,3 +1,6 @@
+// DEPRECATED: RNA-seq trimming is now handled by FASTP in rna_preprocess.nf
+// This subworkflow should not be used for RNA-seq
+
 include { CUTADAPT } from '../modules/cutadapt/main.nf'
 
 workflow RNA_TRIM_READS {

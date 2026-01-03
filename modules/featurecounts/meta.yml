@@ -1,0 +1,11 @@
+name: featurecounts
+description: Gene-level read counting for RNA-seq using featureCounts
+keywords:
+  - RNA-seq
+  - quantification
+  - gene counts
+tools:
+  - featureCounts:
+      description: Read summarization program from the Subread package
+      homepage: https://subread.sourceforge.net/
+      documentation: https://subread.sourceforge.net/featureCounts.html
