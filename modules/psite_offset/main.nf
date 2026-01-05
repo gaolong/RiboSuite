@@ -3,6 +3,10 @@ process PSITE_OFFSET {
     tag "$sample_id"
     conda "bioconda::pysam=0.22.1 bioconda::samtools=1.19 conda-forge::python=3.10"
 
+    publishDir "${params.outdir}/psite_offset",
+        mode: 'copy',
+        pattern: "*.tsv"
+
     input:
         tuple val(sample_id), path(bam), path(bai)
         path gtf

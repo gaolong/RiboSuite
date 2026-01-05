@@ -4,6 +4,11 @@ process UMI_DEDUP {
 
     conda "bioconda::umi_tools=1.1.4 bioconda::samtools=1.20"
 
+    publishDir "${params.outdir}/align",
+        mode: 'copy',
+        pattern: "${sample_id}.umi_dedup.{bam,bam.bai,log}"
+        
+
     input:
     tuple val(sample_id), path(bam), path(bai)
 

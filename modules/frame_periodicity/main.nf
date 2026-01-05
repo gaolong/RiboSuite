@@ -4,6 +4,10 @@ process FRAME_PERIODICITY_QC {
 
     conda "bioconda::pysam=0.22.0 conda-forge::matplotlib conda-forge::pandas"
 
+    publishDir "${params.outdir}/frame_periodicity",
+        mode: 'copy',
+        pattern: "${sample_id}.periodicity.*"
+
     input:
         tuple val(sample_id),
               path(bam),
@@ -13,9 +17,8 @@ process FRAME_PERIODICITY_QC {
 
     output:
         tuple val(sample_id),
-              path("${sample_id}.frame_counts.tsv"),
-              path("${sample_id}.frame_fraction.tsv"),
-              path("${sample_id}.frame_periodicity.png")
+              path("${sample_id}.periodicity.by_region_by_length.tsv"),
+              path("${sample_id}.periodicity.by_region_by_length.heatmap.png")
 
     script:
     """

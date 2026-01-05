@@ -20,6 +20,7 @@ process CUTADAPT_TRIM {
     script:
     """
     cutadapt \
+      -j ${task.cpus} \
       -a ${adapter} \
       -a "G{10}" \
       -o ${sample_id}.trimmed.fastq.gz \

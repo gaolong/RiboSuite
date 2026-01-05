@@ -1,16 +1,49 @@
 name: cds_quant
+
 description: >
-  CDS-level P-site quantification using on-the-fly P-site inference.
-  No intermediate P-site BAM files are generated.
+  CDS-level P-site quantification for Ribo-seq data using
+  precomputed P-site offsets. Quantification is performed
+  directly from aligned BAM files without generating
+  intermediate P-site–shifted BAMs.
+
 keywords:
   - riboseq
   - cds
   - psite
   - quantification
+  - translation
+
 input:
-  - bam
-  - psite offsets
-  - gtf
+  - name: bam
+    type: bam
+    description: >
+      Coordinate-sorted BAM file containing aligned Ribo-seq reads.
+
+  - name: bai
+    type: bai
+    description: >
+      BAM index file corresponding to the input BAM.
+
+  - name: gtf
+    type: gtf
+    description: >
+      Gene annotation in GTF format defining CDS coordinates.
+
+  - name: psite_offsets
+    type: tsv
+    description: >
+      P-site offset table produced by the PSITE_OFFSET module,
+      specifying read-length–specific P-site positions.
+
 output:
-  - transcript-level CDS P-site counts
-  - gene-level CDS P-site counts
+  - name: transcript_cds_counts
+    type: tsv
+    description: >
+      Transcript-level CDS P-site counts
+      (<sample_id>.cds_quant.transcript.tsv).
+
+  - name: gene_cds_counts
+    type: tsv
+    description: >
+      Gene-level CDS P-site counts
+      (<sample_id>.cds_quant.gene.tsv).
