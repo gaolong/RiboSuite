@@ -6,27 +6,35 @@ process UMI_DEDUP {
 
     publishDir "${params.outdir}/align",
         mode: 'copy',
-        pattern: "${sample_id}.umi_dedup.{bam,bam.bai,log}"
-        
+        pattern: "${sample_id}.umi_dedup.{bam,bam.bai,log}|${sample_id}.umi_survivors.qnames.txt"
 
     input:
-    tuple val(sample_id), path(bam), path(bai)
+        tuple val(sample_id), path(bam), path(bai)
 
     output:
-    tuple val(sample_id),
-          path("${sample_id}.umi_dedup.bam"),
-          path("${sample_id}.umi_dedup.bam.bai"),
-          path("${sample_id}.umi_dedup.log")
+        tuple val(sample_id),
+              path("${sample_id}.umi_dedup.bam"),
+              path("${sample_id}.umi_dedup.bam.bai"),
+              path("${sample_id}.umi_dedup.log"),
+              path("${sample_id}.umi_survivors.qnames.txt")
 
     script:
     """
     set -euo pipefail
 
+    # 1) UMI deduplication in removal mode (genome space)
     umi_tools dedup \
         --stdin ${bam} \
         --stdout ${sample_id}.umi_dedup.bam \
         --log ${sample_id}.umi_dedup.log
 
+    # 2) Index deduplicated BAM
     samtools index ${sample_id}.umi_dedup.bam
+
+    # 3) Extract survivor read names (QNAMEs)
+    samtools view ${sample_id}.umi_dedup.bam \
+        | cut -f1 \
+        | sort -u \
+        > ${sample_id}.umi_survivors.qnames.txt
     """
 }

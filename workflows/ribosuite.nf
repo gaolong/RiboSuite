@@ -43,7 +43,7 @@ workflow RiboSuite {
          * Includes PSITE_OFFSET internally
          */
         qc = RIBO_QC_BASIC(
-            aligned,
+            aligned.genome_bam,
             gtf
         )
 
@@ -71,13 +71,13 @@ workflow RiboSuite {
         )
 
     emit:
-        aligned
+        genome_bam           = aligned.genome_bam
         rpf_length_qc        = qc.rpf_length_qc
         psite_offset_qc      = qc.psite_offset_qc
         frame_periodicity_qc = qc.frame_periodicity_qc
         metagene_qc          = qc.metagene_qc
         cds_quant
-}
+    }
 
 
 /*

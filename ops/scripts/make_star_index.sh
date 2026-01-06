@@ -1,6 +1,6 @@
 #!/bin/bash
 #PBS -N star_genome_generate
-#PBS -q super
+#PBS -q workq
 #PBS -l walltime=24:00:00
 #PBS -l select=1:ncpus=8:mem=40gb:ngpus=0
 #PBS -k oe

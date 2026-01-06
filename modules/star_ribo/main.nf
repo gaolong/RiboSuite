@@ -1,9 +1,8 @@
 nextflow.enable.dsl=2
 
-process STAR_ALIGN {
+process STAR_RIBO_ALIGN {
 
     tag "$sample_id"
-
 
     conda "bioconda::star=2.7.11b"
 
@@ -13,9 +12,12 @@ process STAR_ALIGN {
 
     output:
         tuple val(sample_id),
-              path("${sample_id}.Aligned.sortedByCoord.out.bam")
+              path("${sample_id}.Aligned.sortedByCoord.out.bam"),
+              path("${sample_id}.Aligned.toTranscriptome.out.bam"), optional: true
 
     script:
+        def quantArg = params.star_quantmode ? "--quantMode TranscriptomeSAM" : ""
+
         """
         STAR \
           --genomeDir ${star_index} \
@@ -23,6 +25,7 @@ process STAR_ALIGN {
           --readFilesCommand zcat \
           --runThreadN ${task.cpus} \
           --outSAMtype BAM SortedByCoordinate \
+          ${quantArg} \
           --outFileNamePrefix ${sample_id}.
         """
 }
