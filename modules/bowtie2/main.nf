@@ -5,6 +5,10 @@ process BOWTIE2_FILTER {
     tag "$sample_id"
     conda "bioconda::bowtie2=2.5.2"
 
+    publishDir "${params.outdir}/bowtie2_filter",
+        mode: 'copy',
+        pattern: "${sample_id}.*"
+
     input:
         tuple val(sample_id), path(reads)
         path index_dir

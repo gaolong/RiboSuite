@@ -23,6 +23,8 @@ process CUTADAPT_TRIM {
       -j ${task.cpus} \
       -a ${adapter} \
       -a "G{10}" \
+      -m 25 \
+      -M 42 \
       -o ${sample_id}.trimmed.fastq.gz \
       ${reads} \
       > ${sample_id}.cutadapt.log

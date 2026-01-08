@@ -20,12 +20,18 @@ process STAR_RIBO_ALIGN {
 
         """
         STAR \
-          --genomeDir ${star_index} \
-          --readFilesIn ${reads} \
-          --readFilesCommand zcat \
-          --runThreadN ${task.cpus} \
-          --outSAMtype BAM SortedByCoordinate \
-          ${quantArg} \
-          --outFileNamePrefix ${sample_id}.
+            --genomeDir ${star_index} \
+            --readFilesIn ${reads} \
+            --readFilesCommand zcat \
+            --runThreadN ${task.cpus} \
+            --alignEndsType EndToEnd \
+            --outFilterMismatchNmax 2 \
+            --alignSJDBoverhangMin 1 \
+            --alignSJoverhangMin 51 \
+            --outSAMtype BAM SortedByCoordinate \
+            --outSAMattributes All \
+            ${quantArg} \
+            --outTmpDir ${PWD}/_STARtmp \
+            --outFileNamePrefix ${sample_id}.
         """
 }
