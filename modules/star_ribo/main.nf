@@ -31,7 +31,7 @@ process STAR_RIBO_ALIGN {
             --outSAMtype BAM SortedByCoordinate \
             --outSAMattributes All \
             ${quantArg} \
-            --outTmpDir ${PWD}/_STARtmp \
+            --outTmpDir STARtmp \
             --outFileNamePrefix ${sample_id}.
         """
 }

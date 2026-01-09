@@ -1,0 +1,31 @@
+name: export_psite_bigwig
+description: Generate 1-nt resolution P-site BigWig tracks from ribosome profiling BAM files
+keywords:
+  - ribo-seq
+  - p-site
+  - bigwig
+  - visualization
+tools:
+  - name: bedtools
+    homepage: https://bedtools.readthedocs.io
+  - name: samtools
+    homepage: http://www.htslib.org
+  - name: bedGraphToBigWig
+    homepage: http://hgdownload.soe.ucsc.edu/admin/exe
+input:
+  - sample_id:
+      type: string
+      description: Sample identifier
+  - bam:
+      type: file
+      description: Coordinate-sorted, deduplicated BAM
+  - offset_tsv:
+      type: file
+      description: Read-length-specific P-site offsets
+  - genome_sizes:
+      type: file
+      description: Chromosome sizes file
+output:
+  - psite_bw:
+      type: file
+      description: P-site density BigWig

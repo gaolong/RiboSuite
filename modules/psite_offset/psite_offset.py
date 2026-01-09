@@ -147,7 +147,7 @@ def main():
                 dist[L].append(-rel)  # IMPORTANT: keep sign convention
 
     with open(args.out, "w") as out:
-        out.write("sample_id\tread_length\tpsite_offset\tn_reads\tframe0_frac\n")
+        out.write("sample_id\tread_length\tpsite_offset\tn_reads\n")
 
         for L in sorted(dist):
             if len(dist[L]) < args.min_reads:
@@ -172,7 +172,7 @@ def main():
             frame0_frac = f0 / total if total > 0 else 0.0
 
             out.write(
-                f"{args.sample_id}\t{L}\t{offset}\t{len(dist[L])}\t{frame0_frac:.3f}\n"
+                f"{args.sample_id}\t{L}\t{offset}\t{len(dist[L])}\n"
             )
 
     bam.close()
