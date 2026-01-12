@@ -11,7 +11,7 @@ import re
 # --------------------------------------------------
 def parse_args():
     ap = argparse.ArgumentParser(
-        description="Frame periodicity QC (riboWaltz / plastid logic)"
+        description="Frame periodicity QC using CDS-aligned P-sites"
     )
     ap.add_argument("--bam", required=True)
     ap.add_argument("--gtf", required=True)
@@ -44,11 +44,14 @@ def load_tx_models(gtf, min_cds_len):
         for line in f:
             if line.startswith("#"):
                 continue
+
             chrom, _, feature, start, end, _, strand, phase, attr = line.rstrip().split("\t")
             attrs = parse_attrs(attr)
 
             if feature == "gene":
-                gene_type[attrs["gene_id"]] = attrs.get("gene_type") or attrs.get("gene_biotype")
+                gene_type[attrs["gene_id"]] = (
+                    attrs.get("gene_type") or attrs.get("gene_biotype")
+                )
 
             if feature != "CDS":
                 continue
@@ -76,13 +79,11 @@ def load_tx_models(gtf, min_cds_len):
         if cds_len < min_cds_len:
             continue
 
-        # build transcript coordinate map
         tx_pos = []
         cursor = 0
         for s, e, ph in exons:
-            length = e - s
             tx_pos.append((s, e, cursor, ph))
-            cursor += length
+            cursor += (e - s)
 
         models.append({
             "gene": gene,
@@ -99,9 +100,6 @@ def load_tx_models(gtf, min_cds_len):
 # genomic → transcript coordinate
 # --------------------------------------------------
 def genomic_to_tx(psite, exons, strand):
-    """
-    Convert genomic P-site to transcript coordinate
-    """
     if strand == "+":
         for s, e, tx_start, _ in exons:
             if s <= psite < e:
@@ -123,7 +121,7 @@ def main():
     models = load_tx_models(args.gtf, args.min_cds_len)
 
     # --------------------------------------------------
-    # PASS 1: select top transcripts
+    # PASS 1: select top transcripts by CDS P-site count
     # --------------------------------------------------
     tx_counts = defaultdict(int)
 
@@ -151,13 +149,13 @@ def main():
             if tx_pos is not None:
                 tx_counts[tx_id] += 1
 
-    top_tx = set(
+    top_tx = {
         tx for tx, _ in sorted(
             tx_counts.items(),
             key=lambda x: x[1],
             reverse=True
         )[:args.top_tx]
-    )
+    }
 
     # --------------------------------------------------
     # PASS 2: frame periodicity
@@ -198,19 +196,22 @@ def main():
     # output
     # --------------------------------------------------
     rows = [
-        dict(
-            sample=args.sample,
-            read_length=rl,
-            frame=fr,
-            count=c
-        )
+        {
+            "sample": args.sample,
+            "read_length": rl,
+            "frame": fr,
+            "count": c
+        }
         for (rl, fr), c in counts.items()
     ]
 
     df = pd.DataFrame(rows)
-    df["fraction"] = df["count"] / df.groupby("read_length")["count"].transform("sum")
+    df["fraction"] = (
+        df["count"] /
+        df.groupby("read_length")["count"].transform("sum")
+    )
 
-    out = f"{args.sample}.periodicity.ribowaltz_style.tsv"
+    out = f"{args.sample}.periodicity.by_region_by_length.tsv"
     df.to_csv(out, sep="\t", index=False)
 
     print(f"[periodicity] written {out}")
