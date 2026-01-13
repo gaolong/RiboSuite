@@ -34,12 +34,12 @@ def parse_gtf_attributes(attr_str):
 
 def load_start_codons(gtf):
     """
-    Original behavior:
-    - use CDS features
+    Updated behavior:
+    - use explicit start_codon features
     - collapse transcripts sharing the same genomic start
     """
 
-    cds_by_tx = {}
+    start_dict = {}
 
     with open(gtf) as f:
         for line in f:
@@ -47,13 +47,19 @@ def load_start_codons(gtf):
                 continue
 
             fields = line.rstrip().split("\t")
-            if len(fields) < 9 or fields[2] != "CDS":
+            if len(fields) < 9:
+                continue
+
+            feature = fields[2]
+            if feature != "start_codon":
                 continue
 
             chrom = fields[0]
+            strand = fields[6]
+
+            # GTF is 1-based, inclusive
             start = int(fields[3]) - 1
             end = int(fields[4]) - 1
-            strand = fields[6]
 
             attrs = parse_gtf_attributes(fields[8])
             tx_id = attrs.get("transcript_id")
@@ -62,38 +68,24 @@ def load_start_codons(gtf):
             if tx_id is None:
                 continue
 
-            cds_by_tx.setdefault(tx_id, {
+            # choose the correct genomic coordinate for CDS start
+            if strand == "+":
+                start_pos = start
+            else:
+                start_pos = end
+
+            key = (chrom, start_pos, strand)
+
+            start_dict.setdefault(key, {
                 "chrom": chrom,
+                "start_pos": start_pos,
                 "strand": strand,
-                "gene_name": gene_name,
-                "cds": []
-            })["cds"].append((start, end))
+                "gene_names": set(),
+                "transcript_ids": set()
+            })
 
-    start_dict = {}
-
-    for tx_id, info in cds_by_tx.items():
-        chrom = info["chrom"]
-        strand = info["strand"]
-        gene_name = info["gene_name"]
-        cds_list = info["cds"]
-
-        if strand == "+":
-            start_pos = min(cds_list, key=lambda x: x[0])[0]
-        else:
-            start_pos = max(cds_list, key=lambda x: x[1])[1]
-
-        key = (chrom, start_pos, strand)
-
-        start_dict.setdefault(key, {
-            "chrom": chrom,
-            "start_pos": start_pos,
-            "strand": strand,
-            "gene_names": set(),
-            "transcript_ids": set()
-        })
-
-        start_dict[key]["gene_names"].add(gene_name)
-        start_dict[key]["transcript_ids"].add(tx_id)
+            start_dict[key]["gene_names"].add(gene_name)
+            start_dict[key]["transcript_ids"].add(tx_id)
 
     starts = []
     for v in start_dict.values():
@@ -106,6 +98,7 @@ def load_start_codons(gtf):
         ))
 
     return starts
+
 
 
 def main():
