@@ -8,7 +8,7 @@ from collections import defaultdict
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Convert BAM to 1-nt P-site BED files split by read length"
+        description="Convert BAM to 1-nt P-site BED files split by read length, plus a combined BED"
     )
     p.add_argument("--bam", required=True)
     p.add_argument("--offset", required=True,
@@ -45,8 +45,10 @@ bam = pysam.AlignmentFile(args.bam, "rb")
 # --------------------------------------------------
 # Output handles & counters
 # --------------------------------------------------
-out_handles = {}
+out_handles = {}                  # per-length BEDs
 written_by_len = defaultdict(int)
+
+out_all = open(f"{args.out}.all.bed", "w")  # combined BED
 
 n_unmapped = 0
 n_low_mapq = 0
@@ -85,15 +87,16 @@ for r in bam.fetch(until_eof=True):
     if psite < 0:
         continue
 
-    # Lazily open output file for this read length
-    if L not in out_handles:
-        out_path = f"{args.out}.len{L}.bed"
-        out_handles[L] = open(out_path, "w")
+    chrom = bam.get_reference_name(r.reference_id)
+    bed_line = f"{chrom}\t{psite}\t{psite + 1}\n"
 
-    out_handles[L].write(
-        f"{bam.get_reference_name(r.reference_id)}\t"
-        f"{psite}\t{psite + 1}\n"
-    )
+    # Per-length BED
+    if L not in out_handles:
+        out_handles[L] = open(f"{args.out}.len{L}.bed", "w")
+    out_handles[L].write(bed_line)
+
+    # Combined BED
+    out_all.write(bed_line)
 
     written_by_len[L] += 1
     n_written_total += 1
@@ -103,6 +106,8 @@ for r in bam.fetch(until_eof=True):
 # --------------------------------------------------
 for fh in out_handles.values():
     fh.close()
+
+out_all.close()
 
 # --------------------------------------------------
 # Summary (stderr)
