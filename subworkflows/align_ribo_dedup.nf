@@ -10,52 +10,64 @@ include { UMI_DEDUP }                from '../modules/umi_dedup/main.nf'
 workflow ALIGN_RIBO_DEDUP {
 
     take:
-        reads_ch        // (sample_id, clean_fastq, has_umi)
+        reads_ch        // (sid, clean_fastq, has_umi)
         contam_index
         star_index
 
     main:
 
         /*
-         * Keep metadata as a side channel keyed by sample_id
+         * ------------------------------------------------------------
+         * 0. Side metadata channel
+         * ------------------------------------------------------------
          */
         meta_has_umi = reads_ch.map { sid, fq, has_umi ->
             tuple(sid, has_umi)
         }
 
         /*
+         * ------------------------------------------------------------
          * 1. Contaminant filtering
-         *    Input:  (sid, fastq)
+         *    Input : (sid, fastq)
          *    Output: (sid, clean_fastq)
+         * ------------------------------------------------------------
          */
-        filtered0 = BOWTIE2_FILTER(
+        filtered_reads = BOWTIE2_FILTER(
             reads_ch.map { sid, fq, has_umi -> tuple(sid, fq) },
             file(contam_index).parent,
             file(contam_index).getName()
         ).clean_reads
 
-        filtered = filtered0.join(meta_has_umi)
+        filtered = filtered_reads.join(meta_has_umi)
         // (sid, clean_fastq, has_umi)
 
         /*
-         * 2. STAR alignment
-         *    Emits:
-         *      (sid, genome_bam)
-         *      (sid, genome_bam, tx_bam) if --star_quantmode true
+         * ------------------------------------------------------------
+         * 2. STAR genome / transcriptome alignment
+         * ------------------------------------------------------------
          */
-        aligned0 = STAR_RIBO_ALIGN(
+        STAR_RIBO_ALIGN(
             filtered.map { sid, fq, has_umi -> tuple(sid, fq) },
             file(star_index)
         )
 
-        aligned = aligned0.join(meta_has_umi)
-        // (sid, genome_bam, [tx_bam], has_umi)
+        /*
+         * Explicit STAR outputs
+         */
+        aligned_genome = STAR_RIBO_ALIGN.out.genome_bam
+            .join(meta_has_umi)
+        // (sid, genome_bam, has_umi)
+
+        aligned_tx = STAR_RIBO_ALIGN.out.tx_bam
+        // (sid, tx_bam)   [optional, may be empty]
 
         /*
+         * ------------------------------------------------------------
          * 3. Index genome BAM
+         * ------------------------------------------------------------
          */
         indexed0 = SAMTOOLS_INDEX(
-            aligned.map { sid, genome_bam, tx_bam, has_umi ->
+            aligned_genome.map { sid, genome_bam, has_umi ->
                 tuple(sid, genome_bam)
             }
         )
@@ -65,10 +77,9 @@ workflow ALIGN_RIBO_DEDUP {
         // (sid, genome_bam, bai, has_umi)
 
         /*
-         * 4. Genome-space UMI dedup (UMI samples only)
-         *
-         * UMI_DEDUP emits:
-         *   (sid, dedup_bam, dedup_bai, dedup_log, survivors_qnames)
+         * ------------------------------------------------------------
+         * 4. Genome-space UMI deduplication
+         * ------------------------------------------------------------
          */
         with_umi    = indexed.filter { sid, bam, bai, has_umi -> has_umi }
         without_umi = indexed.filter { sid, bam, bai, has_umi -> !has_umi }
@@ -78,11 +89,9 @@ workflow ALIGN_RIBO_DEDUP {
                 tuple(sid, bam, bai)
             }
         )
+        // (sid, dedup_bam, dedup_bai, dedup_log, survivors_qnames)
 
-        /*
-         * Canonical genome BAM output
-         */
-        deduped_genome = deduped.map { sid, dedup_bam, dedup_bai, dedup_log, qnames ->
+        deduped_genome = deduped.map { sid, dedup_bam, dedup_bai, log, qnames ->
             tuple(sid, dedup_bam, dedup_bai)
         }
 
@@ -93,17 +102,14 @@ workflow ALIGN_RIBO_DEDUP {
         genome_bam_out = deduped_genome.mix(passed_genome)
 
         /*
+         * ------------------------------------------------------------
          * 5. Best-effort transcriptome BAM filtering
-         *    (UMI samples only)
-         *
-         * NOTE:
-         * - Survivor QNAMEs are defined in genome space
-         * - Isoform ambiguity is NOT resolved
+         *    (UMI samples only, quantMode enabled only)
+         * ------------------------------------------------------------
          */
-        tx_with_umi = aligned0
+        tx_with_umi = aligned_tx
             .join(deduped)
             .map { sid,
-                   genome_bam,
                    tx_bam,
                    dedup_bam,
                    dedup_bai,
@@ -117,13 +123,13 @@ workflow ALIGN_RIBO_DEDUP {
 
     emit:
         /*
-         * Canonical output for QC and downstream analysis
+         * Canonical genome BAM for QC & downstream analysis
          */
         genome_bam = genome_bam_out
 
         /*
-         * Optional, best-effort transcriptome BAM
-         * (only for UMI samples when --star_quantmode is enabled)
+         * Optional transcriptome BAM
+         * (only when --star_quantmode true AND has_umi)
          */
         tx_bam     = tx_filtered
 }

@@ -1,6 +1,13 @@
 process RPF_LENGTH_QC {
 
     tag "$sample_id"
+
+    publishDir "${params.outdir}/qc/rpf_length",
+               mode: 'copy',
+               saveAs: { file ->
+                   file instanceof Path ? "${sample_id}/${file.name}" : null
+               }
+
     conda "bioconda::samtools=1.19"
 
     input:

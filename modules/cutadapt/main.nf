@@ -6,6 +6,8 @@ process CUTADAPT_TRIM {
 
     conda "bioconda::cutadapt=4.9"
 
+    publishDir "${params.outdir}/cutadapt", mode: 'copy'
+
     input:
     tuple val(sample_id), path(reads), val(adapter), val(bc_pattern)
 
