@@ -6,12 +6,19 @@ import pandas as pd
 from collections import defaultdict
 import re
 
+# --- plotting (HPC / headless safe) ---
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
 # --------------------------------------------------
 # CLI
 # --------------------------------------------------
 def parse_args():
     ap = argparse.ArgumentParser(
-        description="Frame periodicity QC using CDS-aligned P-sites"
+        description="Frame periodicity QC using CDS-aligned P-sites "
+                    "(restricted to transcripts with annotated start codons)"
     )
     ap.add_argument("--bam", required=True)
     ap.add_argument("--gtf", required=True)
@@ -22,6 +29,7 @@ def parse_args():
     ap.add_argument("--mapq", type=int, default=10)
     return ap.parse_args()
 
+
 # --------------------------------------------------
 # offsets
 # --------------------------------------------------
@@ -30,13 +38,44 @@ def load_offsets(path):
     col = "psite_offset" if "psite_offset" in df.columns else "offset"
     return dict(zip(df["read_length"].astype(int), df[col].astype(int)))
 
+
 # --------------------------------------------------
-# GTF parsing
+# GTF parsing helpers
 # --------------------------------------------------
 def parse_attrs(attr):
     return dict(re.findall(r'(\S+)\s+"([^"]+)"', attr))
 
+
+def load_start_codons(gtf):
+    """
+    Return a set of (gene_id, transcript_id) with annotated start codons.
+    """
+    start_tx = set()
+
+    with open(gtf) as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+
+            chrom, _, feature, start, end, _, strand, phase, attr = line.rstrip().split("\t")
+            if feature != "start_codon":
+                continue
+
+            attrs = parse_attrs(attr)
+            gene = attrs.get("gene_id")
+            tx   = attrs.get("transcript_id")
+
+            if gene and tx:
+                start_tx.add((gene, tx))
+
+    return start_tx
+
+
 def load_tx_models(gtf, min_cds_len):
+    """
+    Load CDS models per transcript.
+    Coordinates are stored in transcript order with cumulative CDS offsets.
+    """
     tx_cds = defaultdict(list)
     gene_type = {}
 
@@ -96,10 +135,15 @@ def load_tx_models(gtf, min_cds_len):
 
     return models
 
+
 # --------------------------------------------------
 # genomic → transcript coordinate
 # --------------------------------------------------
 def genomic_to_tx(psite, exons, strand):
+    """
+    Convert genomic P-site to CDS-relative transcript coordinate.
+    Coordinate 0 == first nucleotide of annotated CDS start.
+    """
     if strand == "+":
         for s, e, tx_start, _ in exons:
             if s <= psite < e:
@@ -110,15 +154,28 @@ def genomic_to_tx(psite, exons, strand):
                 return tx_start + (e - psite - 1)
     return None
 
+
 # --------------------------------------------------
 # main
 # --------------------------------------------------
 def main():
     args = parse_args()
+
     offsets = load_offsets(args.offset)
     bam = pysam.AlignmentFile(args.bam, "rb")
 
+    # Load transcript models
     models = load_tx_models(args.gtf, args.min_cds_len)
+
+    # Restrict to transcripts with annotated start codons
+    start_tx = load_start_codons(args.gtf)
+    models = [
+        m for m in models
+        if (m["gene"], m["tx"]) in start_tx
+    ]
+
+    if not models:
+        raise RuntimeError("No transcripts with annotated start codons found.")
 
     # --------------------------------------------------
     # PASS 1: select top transcripts by CDS P-site count
@@ -158,7 +215,7 @@ def main():
     }
 
     # --------------------------------------------------
-    # PASS 2: frame periodicity
+    # PASS 2: frame periodicity (anchored at CDS start)
     # --------------------------------------------------
     counts = defaultdict(int)
 
@@ -193,7 +250,7 @@ def main():
             counts[(rl, frame)] += 1
 
     # --------------------------------------------------
-    # output
+    # output table
     # --------------------------------------------------
     rows = [
         {
@@ -206,15 +263,55 @@ def main():
     ]
 
     df = pd.DataFrame(rows)
+
+    out_tsv = f"{args.sample}.periodicity.by_region_by_length.tsv"
+    df.to_csv(out_tsv, sep="\t", index=False)
+    print(f"[periodicity] written {out_tsv}")
+
+    if df.empty:
+        print("[periodicity] no data available for plotting")
+        return
+
     df["fraction"] = (
         df["count"] /
         df.groupby("read_length")["count"].transform("sum")
     )
 
-    out = f"{args.sample}.periodicity.by_region_by_length.tsv"
-    df.to_csv(out, sep="\t", index=False)
+    # --------------------------------------------------
+    # heatmap
+    # --------------------------------------------------
+    pivot = (
+        df.pivot_table(
+            index="read_length",
+            columns="frame",
+            values="fraction",
+            fill_value=0.0
+        )
+        .sort_index()
+    )
 
-    print(f"[periodicity] written {out}")
+    fig, ax = plt.subplots(figsize=(4, max(3, len(pivot) * 0.25)))
+    im = ax.imshow(pivot.values, aspect="auto", cmap="viridis")
+
+    ax.set_yticks(range(len(pivot.index)))
+    ax.set_yticklabels(pivot.index)
+    ax.set_xticks([0, 1, 2])
+    ax.set_xticklabels(["Frame 0", "Frame 1", "Frame 2"])
+
+    ax.set_xlabel("Frame")
+    ax.set_ylabel("Read length")
+    ax.set_title(f"{args.sample} frame periodicity (annotated starts)")
+
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Fraction")
+
+    out_png = f"{args.sample}.periodicity.by_region_by_length.heatmap.png"
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=200)
+    plt.close(fig)
+
+    print(f"[periodicity] written {out_png}")
+
 
 if __name__ == "__main__":
     main()

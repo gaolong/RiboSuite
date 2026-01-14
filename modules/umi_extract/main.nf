@@ -4,9 +4,7 @@ process UMI_EXTRACT {
 
     publishDir "${params.outdir}/preprocess/umi_extract",
                mode: 'copy',
-               saveAs: { file ->
-                   file instanceof Path ? "${sample_id}/${file.name}" : null
-               }
+               saveAs: { file -> "${sample_id}/${file}" }
 
     conda "bioconda::umi_tools=1.1.4"
 

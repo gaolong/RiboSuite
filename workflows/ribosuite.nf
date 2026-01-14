@@ -71,12 +71,18 @@ workflow RiboSuite {
         )
 
     emit:
-        genome_bam           = aligned.genome_bam
-        rpf_length_qc        = qc.rpf_length_qc
-        psite_offset_qc      = qc.psite_offset_qc
-        frame_periodicity_qc = qc.frame_periodicity_qc
-        metagene_qc          = qc.metagene_qc
+        genome_bam              = aligned.genome_bam
+
+        rpf_length_qc           = qc.rpf_length_qc
+        psite_offset_qc         = qc.psite_offset_qc
+
+        frame_periodicity_tsv   = qc.frame_periodicity_tsv
+        frame_periodicity_png   = qc.frame_periodicity_png
+
+        metagene_qc             = qc.metagene_qc
+
         cds_quant
+
     }
 
 

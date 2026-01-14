@@ -4,9 +4,13 @@ process UMI_DEDUP {
 
     conda "bioconda::umi_tools=1.1.4 bioconda::samtools=1.20"
 
-    publishDir "${params.outdir}/align",
+    publishDir "${params.outdir}/align/umi_dedup",
         mode: 'copy',
-        pattern: "${sample_id}.umi_dedup.{bam,bam.bai,log}|${sample_id}.umi_survivors.qnames.txt"
+        saveAs: { file ->
+            file.toString().endsWith('.umi_survivors.qnames.txt')
+                ? null
+                : "${sample_id}/${file}"
+        }
 
     input:
         tuple val(sample_id), path(bam), path(bai)
@@ -31,7 +35,7 @@ process UMI_DEDUP {
     # 2) Index deduplicated BAM
     samtools index ${sample_id}.umi_dedup.bam
 
-    # 3) Extract survivor read names (QNAMEs)
+    # 3) Survivor QNAMEs (used internally only)
     samtools view ${sample_id}.umi_dedup.bam \
         | cut -f1 \
         | sort -u \

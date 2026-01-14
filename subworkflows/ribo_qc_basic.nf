@@ -16,13 +16,12 @@ workflow RIBO_QC_BASIC {
 
         /*
          * 1) Read-length QC
-         * Consumes (sample_id, bam, bai)
          */
         RPF_LENGTH_QC(aligned_ch)
 
         /*
          * 2) P-site offset
-         * Emits: (sample_id, bam, bai, psite_offsets.tsv)
+         * Emits: (sample_id, bam, bai, offsets)
          */
         PSITE_OFFSET(aligned_ch, gtf)
 
@@ -47,8 +46,20 @@ workflow RIBO_QC_BASIC {
         )
 
     emit:
-        rpf_length_qc        = RPF_LENGTH_QC.out
-        psite_offset_qc      = PSITE_OFFSET.out
-        frame_periodicity_qc = FRAME_PERIODICITY_QC.out
-        metagene_qc          = METAGENE_QC.out
+        /*
+         * QC tables
+         */
+        rpf_length_qc         = RPF_LENGTH_QC.out
+        psite_offset_qc       = PSITE_OFFSET.out
+
+        /*
+         * Frame periodicity (split outputs)
+         */
+        frame_periodicity_tsv = FRAME_PERIODICITY_QC.out.periodicity_tsv
+        frame_periodicity_png = FRAME_PERIODICITY_QC.out.periodicity_png
+
+        /*
+         * Metagene QC
+         */
+        metagene_qc           = METAGENE_QC.out
 }

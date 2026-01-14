@@ -5,20 +5,20 @@ process FASTQC {
     conda "bioconda::fastqc=0.12.1"
 
     publishDir "${params.outdir}/qc/fastqc",
-           mode: 'copy',
-           saveAs: { file ->
-               file instanceof Path ? "${sample_id}/${file.name}" : null
-           }
+        mode: 'copy',
+        pattern: "*_fastqc.{html,zip}",
+        saveAs: { file -> "${sample_id}/${file}" }
 
     input:
-    tuple val(sample_id), path(reads)
+        tuple val(sample_id), path(reads)
 
     output:
-    path "*_fastqc.html", emit: html
-    path "*_fastqc.zip",  emit: zip
+        path "*_fastqc.html", emit: html
+        path "*_fastqc.zip",  emit: zip
 
     script:
     """
+    set -euo pipefail
     fastqc ${reads} --outdir .
     """
 }

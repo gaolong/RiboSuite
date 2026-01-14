@@ -5,7 +5,7 @@ process BOWTIE2_FILTER {
     tag "$sample_id"
     conda "bioconda::bowtie2=2.5.2"
 
-    publishDir "${params.outdir}/bowtie2_filter",
+    publishDir "${params.outdir}/align/bowtie2_filter",
         mode: 'copy',
         pattern: "${sample_id}.*"
 

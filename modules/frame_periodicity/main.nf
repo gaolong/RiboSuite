@@ -4,9 +4,9 @@ process FRAME_PERIODICITY_QC {
 
     conda "bioconda::pysam=0.22.0 conda-forge::matplotlib conda-forge::pandas"
 
-    publishDir "${params.outdir}/frame_periodicity",
+    publishDir "${params.outdir}/qc/frame_periodicity",
         mode: 'copy',
-        pattern: "${sample_id}.periodicity.*"
+        saveAs: { file -> "${sample_id}/${file}" }
 
     input:
         tuple val(sample_id),
@@ -18,7 +18,11 @@ process FRAME_PERIODICITY_QC {
     output:
         tuple val(sample_id),
               path("${sample_id}.periodicity.by_region_by_length.tsv"),
-              path("${sample_id}.periodicity.by_region_by_length.heatmap.png")
+              emit: periodicity_tsv
+
+        path("${sample_id}.periodicity.by_region_by_length.heatmap.png"),
+             optional: true,
+             emit: periodicity_png
 
     script:
     """
