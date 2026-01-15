@@ -11,15 +11,15 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
-
+from matplotlib.ticker import FixedLocator, FixedFormatter
 
 # --------------------------------------------------
 # CLI
 # --------------------------------------------------
 def parse_args():
     ap = argparse.ArgumentParser(
-        description="Frame periodicity QC using CDS-aligned P-sites "
-                    "(restricted to transcripts with annotated start codons)"
+        description="Frame periodicity QC for 5'UTR, CDS and 3'UTR "
+                    "(ribowaltz-style, CDS-anchored frames)"
     )
     ap.add_argument("--bam", required=True)
     ap.add_argument("--gtf", required=True)
@@ -41,7 +41,7 @@ def load_offsets(path):
 
 
 # --------------------------------------------------
-# GTF parsing helpers
+# GTF helpers
 # --------------------------------------------------
 def parse_attrs(attr):
     return dict(re.findall(r'(\S+)\s+"([^"]+)"', attr))
@@ -53,18 +53,35 @@ def load_start_codons(gtf):
         for line in f:
             if line.startswith("#"):
                 continue
-            chrom, _, feature, start, end, _, strand, phase, attr = line.rstrip().split("\t")
+            chrom, _, feature, *_ , attr = line.rstrip().split("\t")
             if feature != "start_codon":
                 continue
             attrs = parse_attrs(attr)
-            gene = attrs.get("gene_id")
-            tx = attrs.get("transcript_id")
-            if gene and tx:
-                start_tx.add((gene, tx))
+            if "gene_id" in attrs and "transcript_id" in attrs:
+                start_tx.add((attrs["gene_id"], attrs["transcript_id"]))
     return start_tx
 
 
+# --------------------------------------------------
+# genomic → spliced transcript coordinate
+# --------------------------------------------------
+def genomic_to_tx_spliced(pos, exons, strand):
+    if strand == "+":
+        for s, e, tx_s in exons:
+            if s <= pos < e:
+                return tx_s + (pos - s)
+    else:
+        for s, e, tx_s in reversed(exons):
+            if s <= pos < e:
+                return tx_s + (e - pos - 1)
+    return None
+
+
+# --------------------------------------------------
+# load transcript models (exon-based)
+# --------------------------------------------------
 def load_tx_models(gtf, min_cds_len):
+    tx_exons = defaultdict(list)
     tx_cds = defaultdict(list)
     gene_type = {}
 
@@ -80,8 +97,6 @@ def load_tx_models(gtf, min_cds_len):
                 gene_type[attrs["gene_id"]] = (
                     attrs.get("gene_type") or attrs.get("gene_biotype")
                 )
-
-            if feature != "CDS":
                 continue
 
             gene = attrs.get("gene_id")
@@ -93,24 +108,39 @@ def load_tx_models(gtf, min_cds_len):
 
             start0 = int(start) - 1
             end0 = int(end)
-            ph = 0 if phase == "." else int(phase)
-            tx_cds[(gene, tx, chrom, strand)].append((start0, end0, ph))
+
+            if feature == "exon":
+                tx_exons[(gene, tx, chrom, strand)].append((start0, end0))
+            elif feature == "CDS":
+                tx_cds[(gene, tx, chrom, strand)].append((start0, end0))
 
     models = []
-    for (gene, tx, chrom, strand), exons in tx_cds.items():
+
+    for key, exons in tx_exons.items():
+        gene, tx, chrom, strand = key
+        if key not in tx_cds:
+            continue
+
         exons.sort(key=lambda x: x[0])
-        cds_len = sum(e - s for s, e, _ in exons)
+        cds_intervals = tx_cds[key]
+        cds_len = sum(e - s for s, e in cds_intervals)
         if cds_len < min_cds_len:
             continue
 
+        # build spliced transcript coordinates
         tx_pos = []
         cursor = 0
-        for s, e, ph in exons:
-            tx_pos.append((s, e, cursor, ph))
+        for s, e in exons:
+            tx_pos.append((s, e, cursor))
             cursor += (e - s)
+        tx_len = cursor
 
-        cds_start = min(s for s, e, _, _ in tx_pos)
-        cds_end = max(e for s, e, _, _ in tx_pos)
+        # CDS boundaries in genomic coords
+        cds_start_g = min(s for s, e in cds_intervals)
+        cds_end_g = max(e for s, e in cds_intervals)
+
+        cds_start_tx = genomic_to_tx_spliced(cds_start_g, tx_pos, strand)
+        cds_end_tx = genomic_to_tx_spliced(cds_end_g - 1, tx_pos, strand) + 1
 
         models.append({
             "gene": gene,
@@ -118,27 +148,14 @@ def load_tx_models(gtf, min_cds_len):
             "chrom": chrom,
             "strand": strand,
             "exons": tx_pos,
-            "cds_len": cds_len,
-            "cds_start": cds_start,
-            "cds_end": cds_end
+            "tx_len": tx_len,
+            "cds_start_tx": cds_start_tx,
+            "cds_end_tx": cds_end_tx,
+            "fetch_start": min(s for s, e in exons),
+            "fetch_end": max(e for s, e in exons)
         })
 
     return models
-
-
-# --------------------------------------------------
-# genomic → transcript coordinate
-# --------------------------------------------------
-def genomic_to_tx(psite, exons, strand):
-    if strand == "+":
-        for s, e, tx_start, _ in exons:
-            if s <= psite < e:
-                return tx_start + (psite - s)
-    else:
-        for s, e, tx_start, _ in reversed(exons):
-            if s <= psite < e:
-                return tx_start + (e - psite - 1)
-    return None
 
 
 # --------------------------------------------------
@@ -156,21 +173,20 @@ def main():
     models = [m for m in models if (m["gene"], m["tx"]) in start_tx]
 
     if not models:
-        raise RuntimeError("No transcripts with annotated start codons found.")
+        raise RuntimeError("No valid transcripts found")
 
     # --------------------------------------------------
-    # PASS 1: select top transcripts
+    # PASS 1: select top transcripts (CDS only)
     # --------------------------------------------------
     tx_counts = defaultdict(int)
 
     for m in models:
         chrom, strand = m["chrom"], m["strand"]
         tx_id = (m["gene"], m["tx"])
+        fs = max(0, m["fetch_start"] - max_offset)
+        fe = m["fetch_end"] + max_offset
 
-        fetch_start = max(0, m["cds_start"] - max_offset)
-        fetch_end = m["cds_end"] + max_offset
-
-        for read in bam.fetch(chrom, fetch_start, fetch_end):
+        for read in bam.fetch(chrom, fs, fe):
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
             if read.mapping_quality < args.mapq:
@@ -186,7 +202,10 @@ def main():
                 else read.reference_end - offsets[rl] - 1
             )
 
-            if genomic_to_tx(psite, m["exons"], strand) is not None:
+            tx_pos = genomic_to_tx_spliced(psite, m["exons"], strand)
+            if tx_pos is None:
+                continue
+            if m["cds_start_tx"] <= tx_pos < m["cds_end_tx"]:
                 tx_counts[tx_id] += 1
 
     top_tx = {
@@ -198,7 +217,7 @@ def main():
     }
 
     # --------------------------------------------------
-    # PASS 2: frame periodicity
+    # PASS 2: region-aware periodicity
     # --------------------------------------------------
     counts = defaultdict(int)
 
@@ -208,10 +227,10 @@ def main():
             continue
 
         chrom, strand = m["chrom"], m["strand"]
-        fetch_start = max(0, m["cds_start"] - max_offset)
-        fetch_end = m["cds_end"] + max_offset
+        fs = max(0, m["fetch_start"] - max_offset)
+        fe = m["fetch_end"] + max_offset
 
-        for read in bam.fetch(chrom, fetch_start, fetch_end):
+        for read in bam.fetch(chrom, fs, fe):
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
             if read.mapping_quality < args.mapq:
@@ -227,16 +246,36 @@ def main():
                 else read.reference_end - offsets[rl] - 1
             )
 
-            tx_pos = genomic_to_tx(psite, m["exons"], strand)
-            if tx_pos is not None:
-                counts[(rl, tx_pos % 3)] += 1
+            tx_pos = genomic_to_tx_spliced(psite, m["exons"], strand)
+            if tx_pos is None:
+                continue
+
+            rel = tx_pos - m["cds_start_tx"]
+            frame = rel % 3
+
+            if tx_pos < m["cds_start_tx"]:
+                region = "5UTR"
+            elif tx_pos < m["cds_end_tx"]:
+                region = "CDS"
+            else:
+                region = "3UTR"
+
+            counts[(region, rl, frame)] += 1
 
     # --------------------------------------------------
-    # output
+    # output table
     # --------------------------------------------------
     df = pd.DataFrame(
-        [{"sample": args.sample, "read_length": rl, "frame": fr, "count": c}
-         for (rl, fr), c in counts.items()]
+        [
+            {
+                "sample": args.sample,
+                "region": region,
+                "read_length": rl,
+                "frame": frame,
+                "count": c
+            }
+            for (region, rl, frame), c in counts.items()
+        ]
     )
 
     out_tsv = f"{args.sample}.periodicity.by_region_by_length.tsv"
@@ -246,38 +285,92 @@ def main():
     if df.empty:
         return
 
-    df["fraction"] = df["count"] / df.groupby("read_length")["count"].transform("sum")
+    df["fraction"] = (
+        df["count"] /
+        df.groupby(["region", "read_length"])["count"].transform("sum")
+    )
 
-    pivot = df.pivot_table(
-        index="read_length",
-        columns="frame",
-        values="fraction",
-        fill_value=0.0
-    ).sort_index()
+    # --------------------------------------------------
+    # plotting: 3 heatmaps (5′UTR, CDS, 3′UTR)
+    # --------------------------------------------------
+    regions = ["5UTR", "CDS", "3UTR"]
+    region_titles = ["5′ UTR", "CDS", "3′ UTR"]
 
     cmap = LinearSegmentedColormap.from_list("white_red", ["#ffffff", "#ff0000"])
 
-    fig, ax = plt.subplots(figsize=(4, max(3, len(pivot) * 0.25)))
-    im = ax.imshow(pivot.values, aspect="auto", cmap=cmap, vmin=0, vmax=1)
+    all_lengths = sorted(df["read_length"].unique())
+    nrows = len(all_lengths)
 
-    ax.set_yticks(range(len(pivot.index)))
-    ax.set_yticklabels(pivot.index)
-    ax.set_xticks([0, 1, 2])
-    ax.set_xticklabels(["Frame 0", "Frame 1", "Frame 2"])
-    ax.set_xlabel("Frame")
-    ax.set_ylabel("Read length")
-    ax.set_title(f"{args.sample} frame periodicity (annotated starts)")
+    fig, axes = plt.subplots(
+        ncols=3,
+        figsize=(11, max(4, nrows * 0.35)),
+        constrained_layout=True
+    )
 
-    cbar = fig.colorbar(im, ax=ax)
+    im = None
+
+    for i, (ax, region, title) in enumerate(zip(axes, regions, region_titles)):
+        sub = df[df["region"] == region]
+
+        pivot = (
+            sub.pivot_table(
+                index="read_length",
+                columns="frame",
+                values="fraction",
+                fill_value=0.0
+            )
+            .reindex(all_lengths, fill_value=0.0)
+            .sort_index()
+        )
+
+        im = ax.imshow(
+            pivot.values,
+            aspect="auto",
+            cmap=cmap,
+            vmin=0.0,
+            vmax=1.0
+        )
+
+        # ---- titles ----
+        ax.set_title(title)
+
+        # ---- x axis: keep ticks, remove label ----
+        ax.set_xticks([0, 1, 2])
+        ax.set_xticklabels(["Frame 0", "Frame 1", "Frame 2"])
+        ax.set_xlabel("")   # remove axis label
+
+        # ---- y axis ----
+        ax.set_yticks(range(nrows))
+        ax.set_ylim(nrows - 0.5, -0.5)
+
+        if i == 0:
+            # left panel: show read length labels
+            ax.yaxis.set_major_locator(FixedLocator(range(nrows)))
+            ax.yaxis.set_major_formatter(
+                FixedFormatter([str(x) for x in all_lengths])
+            )
+            ax.set_ylabel("Read length")
+            ax.tick_params(axis="y", labelsize=11, pad=8)
+        else:
+            # CDS & 3′UTR: remove y ticks entirely
+            ax.set_yticklabels([])
+            ax.tick_params(axis="y", left=False)
+
+    # ---- shared colorbar ----
+    cbar = fig.colorbar(im, ax=axes, fraction=0.035, pad=0.02)
     cbar.set_label("Fraction")
     cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
 
+    fig.suptitle(f"{args.sample} frame periodicity (CDS-anchored)")
+
     out_png = f"{args.sample}.periodicity.by_region_by_length.heatmap.png"
-    fig.tight_layout()
     fig.savefig(out_png, dpi=200)
     plt.close(fig)
 
     print(f"[periodicity] written {out_png}")
+
+
+
 
 
 if __name__ == "__main__":
