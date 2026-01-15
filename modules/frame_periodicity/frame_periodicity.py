@@ -19,7 +19,7 @@ from matplotlib.ticker import FixedLocator, FixedFormatter
 def parse_args():
     ap = argparse.ArgumentParser(
         description="Frame periodicity QC for 5'UTR, CDS and 3'UTR "
-                    "(ribowaltz-style, CDS-anchored frames)"
+                    "(CDS-anchored frames)"
     )
     ap.add_argument("--bam", required=True)
     ap.add_argument("--gtf", required=True)
