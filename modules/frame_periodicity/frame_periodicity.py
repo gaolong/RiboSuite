@@ -28,7 +28,7 @@ def parse_args():
     ap.add_argument("--sample", required=True)
     ap.add_argument("--min_cds_len", type=int, default=0)
     ap.add_argument("--top_tx", type=int, default=15000)
-    ap.add_argument("--mapq", type=int, default=0)
+    ap.add_argument("--mapq", type=int, default=100)
 
     # NEW: optional phase usage
     ap.add_argument(
