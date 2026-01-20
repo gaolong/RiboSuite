@@ -448,7 +448,7 @@ def main():
         dict(sample=args.sample, region=r, read_length=rl, frame=f, count=c)
         for (r, rl, f), c in counts.items()
     ])
-    print(df)
+    
     out_tsv = f"{args.sample}.periodicity.by_region_by_length.tsv"
     df.to_csv(out_tsv, sep="\t", index=False)
     print(f"[periodicity] written {out_tsv}")
