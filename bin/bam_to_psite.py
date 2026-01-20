@@ -6,16 +6,33 @@ import pandas as pd
 import sys
 from collections import defaultdict
 
+# --------------------------------------------------
+# CLI
+# --------------------------------------------------
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Convert BAM to 1-nt P-site BED files split by read length, plus a combined BED"
+        description=(
+            "Convert BAM to 1-nt P-site BED files. "
+            "Always produces a combined BED; optionally split by read length."
+        )
     )
     p.add_argument("--bam", required=True)
-    p.add_argument("--offset", required=True,
-                   help="TSV with columns: read_length, psite_offset")
-    p.add_argument("--out", required=True,
-                   help="Output prefix (e.g. sample.psite)")
+    p.add_argument(
+        "--offset",
+        required=True,
+        help="TSV with columns: read_length, psite_offset"
+    )
+    p.add_argument(
+        "--out",
+        required=True,
+        help="Output prefix (e.g. sample.psite)"
+    )
     p.add_argument("--mapq", type=int, default=100)
+    p.add_argument(
+        "--by_length",
+        action="store_true",
+        help="Also generate per-read-length BED files (*.len{L}.bed)"
+    )
     return p.parse_args()
 
 args = parse_args()
@@ -34,7 +51,6 @@ if not required_cols.issubset(off.columns):
 
 off["read_length"] = off["read_length"].astype(int)
 off["psite_offset"] = off["psite_offset"].astype(int)
-
 offsets = dict(zip(off["read_length"], off["psite_offset"]))
 
 # --------------------------------------------------
@@ -45,10 +61,11 @@ bam = pysam.AlignmentFile(args.bam, "rb")
 # --------------------------------------------------
 # Output handles & counters
 # --------------------------------------------------
-out_handles = {}                  # per-length BEDs
+out_handles = {}                  # per-length BEDs (optional)
 written_by_len = defaultdict(int)
 
-out_all = open(f"{args.out}.all.bed", "w")  # combined BED
+# Combined BED (ALWAYS written)
+out_all = open(f"{args.out}.all.bed", "w")
 
 n_unmapped = 0
 n_low_mapq = 0
@@ -90,15 +107,16 @@ for r in bam.fetch(until_eof=True):
     chrom = bam.get_reference_name(r.reference_id)
     bed_line = f"{chrom}\t{psite}\t{psite + 1}\n"
 
-    # Per-length BED
-    if L not in out_handles:
-        out_handles[L] = open(f"{args.out}.len{L}.bed", "w")
-    out_handles[L].write(bed_line)
-
-    # Combined BED
+    # Combined BED (always)
     out_all.write(bed_line)
 
-    written_by_len[L] += 1
+    # Optional per-length BED
+    if args.by_length:
+        if L not in out_handles:
+            out_handles[L] = open(f"{args.out}.len{L}.bed", "w")
+        out_handles[L].write(bed_line)
+        written_by_len[L] += 1
+
     n_written_total += 1
 
 # --------------------------------------------------
@@ -113,7 +131,7 @@ out_all.close()
 # Summary (stderr)
 # --------------------------------------------------
 print(
-    f"[bam_to_psite_by_len] "
+    f"[bam_to_psite] "
     f"unmapped/secondary={n_unmapped}, "
     f"low_mapq={n_low_mapq}, "
     f"no_offset={n_no_offset}, "
@@ -121,9 +139,9 @@ print(
     file=sys.stderr
 )
 
-for L in sorted(written_by_len):
-    print(
-        f"[bam_to_psite_by_len] "
-        f"len={L}\twritten={written_by_len[L]}",
-        file=sys.stderr
-    )
+if args.by_length:
+    for L in sorted(written_by_len):
+        print(
+            f"[bam_to_psite] len={L}\twritten={written_by_len[L]}",
+            file=sys.stderr
+        )
