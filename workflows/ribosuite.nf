@@ -7,7 +7,7 @@ include { PREPROCESS_READS }   from '../subworkflows/preprocess_reads.nf'
 include { ALIGN_RIBO_DEDUP }   from '../subworkflows/align_ribo_dedup.nf'
 include { RIBO_QC_BASIC }      from '../subworkflows/ribo_qc_basic.nf'
 include { CDS_QUANT }          from '../modules/cds_quant/main.nf'
-
+include { PSITE_TRACK } from '../modules/psite_track/main.nf'
 
 /*
  * ------------------------------------------------------------
@@ -70,6 +70,26 @@ workflow RiboSuite {
             }
         )
 
+        /*
+         * 5) Optional P-site bigWig tracks
+         */
+        if (params.enable_psite_track) {
+
+            psite_track = PSITE_TRACK(
+                // (sample_id, bam)
+                aligned.genome_bam.map { sid, bam, bai ->
+                    tuple(sid, bam)
+                },
+                // offsets
+                qc.psite_offset_qc.map { sid, bam, bai, offsets ->
+                    offsets
+                },
+                // genome sizes
+                file(params.genome_sizes)
+            )
+        }
+
+
     emit:
         genome_bam              = aligned.genome_bam
 
@@ -82,6 +102,10 @@ workflow RiboSuite {
         metagene_qc             = qc.metagene_qc
 
         cds_quant
+
+        psite_tracks = params.enable_psite_track \
+            ? psite_track.psite_tracks_by_len \
+            : Channel.empty()
 
     }
 
