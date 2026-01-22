@@ -13,7 +13,7 @@ def parse_args():
     p.add_argument("--gtf", required=True)
     p.add_argument("--sample_id", required=True)
     p.add_argument("--window_up", type=int, default=50)
-    p.add_argument("--window_down", type=int, default=0)
+    p.add_argument("--window_down", type=int, default=-8)
     p.add_argument("--min_len", type=int, default=26)
     p.add_argument("--max_len", type=int, default=34)
     p.add_argument("--min_reads", type=int, default=100)
