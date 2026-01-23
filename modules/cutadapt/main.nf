@@ -43,16 +43,28 @@ process CUTADAPT_TRIM {
     ############################
     # 2. Check trimming success
     ############################
-    written_frac=\$(grep -oP "Reads written \\(passing filters\\):.*\\(\\K[0-9.]+(?=%\\))" \
-                    ${sample_id}.cutadapt.log | tail -n 1 || echo 0)
+    written_frac_pct=\$(
+      grep -oP 'Reads written \\(passing filters\\):.*\\(\\K[0-9.]+(?=%\\))' \\
+        "${sample_id}.cutadapt.log" | tail -n 1 || echo 0
+    )
 
-    echo "[CUTADAPT_TRIM] ${sample_id}: written fraction = \${written_frac}%"
+    adapter_frac_pct=\$(
+      grep -oP 'Reads with adapters:.*\\(\\K[0-9.]+(?=%\\))' \\
+        "${sample_id}.cutadapt.log" | tail -n 1 || echo 0
+    )
 
-    if ! awk -v f="\$written_frac" -v th=${params.cutadapt_success_frac} \
-         'BEGIN{exit !(f >= th)}'; then
+    written_frac=\$(awk -v x="\$written_frac_pct" 'BEGIN{print x/100}')
+    adapter_frac=\$(awk -v x="\$adapter_frac_pct" 'BEGIN{print x/100}')
+
+    echo "[CUTADAPT_TRIM] ${sample_id}: written_frac=\${written_frac}, adapter_frac=\${adapter_frac}"
+
+    if ! awk -v w="\$written_frac" -v wt="${params.cutadapt_success_frac}" \\
+             -v a="\$adapter_frac" -v at="${params.cutadapt_min_adapter_frac}" \\
+             'BEGIN{exit !(w >= wt && a >= at)}'; then
+
         echo "[CUTADAPT_TRIM] ${sample_id}: trimming failed, will attempt rescue"
         FAILED_INITIAL=1
-        cp ${sample_id}.cutadapt.log ${sample_id}.failed.cutadapt.log
+        mv "${sample_id}.cutadapt.log" "${sample_id}.failed.cutadapt.log"
     else
         echo "[CUTADAPT_TRIM] ${sample_id}: trimming successful"
     fi
