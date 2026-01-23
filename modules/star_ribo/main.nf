@@ -39,7 +39,8 @@ process STAR_RIBO_ALIGN {
         path "${sample_id}.Log.final.out", emit: star_log
 
     script:
-        def quantArg = params.star_quantmode ? "--quantMode TranscriptomeSAM" : ""
+        def quantArg  = params.star_quantmode ? "--quantMode TranscriptomeSAM" : ""
+        def alignType = params.star_alignEndsType ?: "Local"
 
         """
         set -euo pipefail
@@ -49,7 +50,7 @@ process STAR_RIBO_ALIGN {
             --readFilesIn ${reads} \
             --readFilesCommand zcat \
             --runThreadN ${task.cpus} \
-            --alignEndsType EndToEnd \
+            --alignEndsType ${alignType} \
             --outFilterMismatchNmax 2 \
             --alignSJDBoverhangMin 1 \
             --alignSJoverhangMin 51 \
