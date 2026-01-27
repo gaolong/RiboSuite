@@ -108,7 +108,13 @@ def parse_gtf_cds_union(gtf_file: str):
     Parse CDS entries from a GTF and build gene-level CDS union intervals.
 
     Returns:
-      gene_meta: dict[gene_id] = {"chrom": str, "strand": str, "cds_start": int, "intervals": [(s,e),...]}
+      gene_meta: dict[gene_id] = {
+          "chrom": str,
+          "strand": str,
+          "cds_start": int,
+          "cds_len": int,
+          "intervals": [(s,e),...]
+      }
       chrom_index: dict[chrom] = {
             "starts": [start0, start1, ...]  (sorted),
             "entries": [(start, end, gene_id, strand), ...] (same order),
@@ -168,10 +174,12 @@ def parse_gtf_cds_union(gtf_file: str):
         else:
             cds_start = max(e for _, e in merged) - 1
 
+        cds_len = sum(e - s for s, e in merged)
         gene_meta[gene] = {
             "chrom": chrom,
             "strand": strand,
             "cds_start": cds_start,
+            "cds_len": cds_len,
             "intervals": merged
         }
 
@@ -333,10 +341,26 @@ def main():
 
     bam.close()
 
+    rows = []
+    for g, meta in gene_meta.items():
+        c = gene_counts.get(g, 0)
+        cds_len = meta["cds_len"]
+        rows.append((args.sample, g, c, cds_len))
+
     out_gene = pd.DataFrame(
-        [(args.sample, g, c) for g, c in gene_counts.items()],
-        columns=["sample", "gene_id", "cds_psite_count"]
+        rows,
+        columns=["sample", "gene_id", "cds_psite_count", "cds_length"]
     ).sort_values(["gene_id"])
+
+    # TPM from CDS-length-normalized counts
+    if not out_gene.empty:
+        denom_kb = out_gene["cds_length"].replace(0, pd.NA) / 1000.0
+        rpk = (out_gene["cds_psite_count"] / denom_kb).fillna(0.0)
+        total_rpk = rpk.sum()
+        if total_rpk > 0:
+            out_gene["cds_tpm"] = rpk / total_rpk * 1e6
+        else:
+            out_gene["cds_tpm"] = 0.0
 
     out_gene.to_csv(f"{args.out_prefix}.gene.tsv", sep="\t", index=False)
 
