@@ -432,13 +432,25 @@ def main():
             else:
                 frame = (start_codon_tx - tx_pos) % 3
 
-            if in_cds:
-                region = "CDS"
-            elif tx_pos < m["cds_lo_tx"]:
-                region = "5UTR"
+            
+            if strand == "+":
+                in_cds = m["cds_lo_tx"] <= tx_pos < m["cds_hi_tx"]
+                if in_cds:
+                    region = "CDS"
+                elif tx_pos < m["cds_lo_tx"]:
+                    region = "5UTR"
+                else:
+                    region = "3UTR"
             else:
-                region = "3UTR"
+                in_cds = m["cds_hi_tx"] <= tx_pos < m["cds_lo_tx"]
+                if in_cds:
+                    region = "CDS"
+                elif tx_pos < m["cds_hi_tx"]:
+                    region = "3UTR"
+                else:
+                    region = "5UTR"
 
+     
             counts[(region, rl, frame)] += 1
 
     # --------------------------------------------------
