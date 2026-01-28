@@ -43,7 +43,7 @@ def parse_args():
     p.add_argument("--sample", required=True, help="Sample ID")
 
     p.add_argument("--out_prefix", default="cds_quant", help="Output prefix")
-    p.add_argument("--min_mapq", type=int, default=10, help="Minimum MAPQ (default: 10)")
+    p.add_argument("--min_mapq", type=int, default=100, help="Minimum MAPQ (default: 100)")
     p.add_argument("--include_duplicates", action="store_true",
                    help="Include PCR/optical duplicates (default: excluded if flagged)")
     p.add_argument("--allow_multi_overlap", action="store_true",
@@ -113,6 +113,7 @@ def parse_gtf_cds_union(gtf_file: str):
           "strand": str,
           "cds_start": int,
           "cds_len": int,
+          "gene_name": str,
           "intervals": [(s,e),...]
       }
       chrom_index: dict[chrom] = {
@@ -129,6 +130,7 @@ def parse_gtf_cds_union(gtf_file: str):
     """
     attr_re = re.compile(r'(\S+)\s+"([^"]+)"')
     cds_raw = defaultdict(list)  # (gene_id, chrom, strand) -> list of (start, end)
+    gene_names = {}  # gene_id -> gene_name (first seen)
 
     with open(gtf_file, "r") as fh:
         for line in fh:
@@ -145,6 +147,9 @@ def parse_gtf_cds_union(gtf_file: str):
             gene = attrs.get("gene_id")
             if not gene:
                 continue
+            gene_name = attrs.get("gene_name")
+            if gene_name and gene not in gene_names:
+                gene_names[gene] = gene_name
 
             # GTF is 1-based inclusive; convert to 0-based half-open
             s = int(start) - 1
@@ -180,6 +185,7 @@ def parse_gtf_cds_union(gtf_file: str):
             "strand": strand,
             "cds_start": cds_start,
             "cds_len": cds_len,
+            "gene_name": gene_names.get(gene, ""),
             "intervals": merged
         }
 
@@ -345,11 +351,12 @@ def main():
     for g, meta in gene_meta.items():
         c = gene_counts.get(g, 0)
         cds_len = meta["cds_len"]
-        rows.append((args.sample, g, c, cds_len))
+        gene_name = meta.get("gene_name", "")
+        rows.append((args.sample, g, gene_name, c, cds_len))
 
     out_gene = pd.DataFrame(
         rows,
-        columns=["sample", "gene_id", "cds_psite_count", "cds_length"]
+        columns=["sample", "gene_id", "gene_name", "cds_psite_count", "cds_length"]
     ).sort_values(["gene_id"])
 
     # TPM from CDS-length-normalized counts
