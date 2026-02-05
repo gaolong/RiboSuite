@@ -4,30 +4,31 @@ process CUTADAPT_TRIM {
 
     conda "bioconda::cutadapt=4.9 bioconda::seqtk"
 
-    // Always publish logs
-    publishDir "${params.outdir}/cutadapt/logs",
+    publishDir "${params.outdir}/cutadapt",
         mode: 'copy',
         saveAs: { file ->
-            file.name.endsWith('.log')
-                ? "${sample_id}/${file.name}"
-                : null
-        }
+            def fname = file instanceof Path ? file.name : file.toString()
 
-    // Optionally publish FASTQs
-    publishDir {
-        if (params.publish_fastq) {
-            path "${params.outdir}/cutadapt/fastq"
-            mode 'copy'
-            saveAs { file ->
-                file.name.endsWith('.fastq.gz')
-                    ? "${sample_id}/${file.name}"
-                    : null
+            // always publish logs
+            if (fname.endsWith('.log')) {
+                return "${sample_id}/${fname}"
             }
+
+            // publish FASTQ only if enabled
+            if (fname.endsWith('.fastq.gz') && params.publish_fastq) {
+                return "${sample_id}/${fname}"
+            }
+
+            // otherwise: do not publish
+            return null
         }
-    }
 
     input:
-        tuple val(sample_id), path(reads), val(adapter), val(bc_pattern)
+        tuple val(sample_id),
+              path(reads),
+              val(adapter_5),
+              val(adapter_3),
+              val(bc_pattern)
 
     output:
         tuple val(sample_id),
@@ -45,12 +46,25 @@ process CUTADAPT_TRIM {
     FAILED_INITIAL=0
 
     ############################
+    # Build adapter args
+    ############################
+    ADAPTER_ARGS=""
+
+    if [ "${adapter_5}" != "null" ]; then
+        ADAPTER_ARGS="\$ADAPTER_ARGS -g ${adapter_5}"
+    fi
+
+    if [ "${adapter_3}" != "null" ]; then
+        ADAPTER_ARGS="\$ADAPTER_ARGS -a ${adapter_3}"
+    fi
+
+    ############################
     # 1. Primary trimming
     ############################
     cutadapt \\
       -j ${task.cpus} \\
       --trim-n \\
-      -a ${adapter} \\
+      \$ADAPTER_ARGS \\
       -a "G{10}" \\
       -m ${params.cutadapt_min_len} \\
       -M ${params.cutadapt_max_len} \\
@@ -88,7 +102,7 @@ process CUTADAPT_TRIM {
     fi
 
     ############################
-    # 3. Fallback: adapter rescue
+    # 3. Fallback: adapter rescue (3′ only)
     ############################
     if [ "\$FAILED_INITIAL" -eq 1 ]; then
 
@@ -128,11 +142,8 @@ process CUTADAPT_TRIM {
             exit 1
         fi
 
-        echo "[CUTADAPT_TRIM] ${sample_id}: rescued adapter = \$best_adapter"
+        echo "[CUTADAPT_TRIM] ${sample_id}: rescued 3' adapter = \$best_adapter"
 
-        ############################
-        # 4. Re-trim with rescued adapter
-        ############################
         cutadapt \\
           -j ${task.cpus} \\
           --trim-n \\

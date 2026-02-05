@@ -1,13 +1,16 @@
 nextflow.enable.dsl = 2
 
 /*
- * Subworkflows
+ * ------------------------------------------------------------
+ * Subworkflows / modules
+ * ------------------------------------------------------------
  */
 include { PREPROCESS_READS }   from '../subworkflows/preprocess_reads.nf'
 include { ALIGN_RIBO_DEDUP }   from '../subworkflows/align_ribo_dedup.nf'
 include { RIBO_QC_BASIC }      from '../subworkflows/ribo_qc_basic.nf'
 include { CDS_QUANT }          from '../modules/cds_quant/main.nf'
-include { PSITE_TRACK } from '../modules/psite_track/main.nf'
+include { PSITE_TRACK }        from '../modules/psite_track/main.nf'
+
 
 /*
  * ------------------------------------------------------------
@@ -17,8 +20,9 @@ include { PSITE_TRACK } from '../modules/psite_track/main.nf'
 workflow RiboSuite {
 
     take:
-        reads_ch    // (sample_id, fastq, adapter, bc_pattern, has_umi)
-        gtf         // annotation GTF
+        // (sample_id, fastq, adapter_5, adapter_3, bc_pattern, has_umi)
+        reads_ch
+        gtf
 
     main:
 
@@ -48,11 +52,8 @@ workflow RiboSuite {
         )
 
         /*
-         * 4) CDS quantification
-         * MUST use P-site offsets
+         * 4) CDS quantification (requires P-site offsets)
          */
-
-        // Extract (sample_id, bam, bai, offsets)
         psite_for_quant = qc.psite_offset_qc.map { sid, bam, bai, offsets ->
             tuple(sid, bam, bai, offsets)
         }
@@ -89,7 +90,6 @@ workflow RiboSuite {
             )
         }
 
-
     emit:
         genome_bam              = aligned.genome_bam
 
@@ -106,8 +106,7 @@ workflow RiboSuite {
         psite_tracks = params.enable_psite_track \
             ? psite_track.psite_tracks_by_len \
             : Channel.empty()
-
-    }
+}
 
 
 /*
@@ -125,13 +124,50 @@ workflow {
         .splitCsv(header: true, sep: '\t')
         .map { row ->
 
-            def has_umi = row.bc_pattern && row.bc_pattern != 'NA'
+            /*
+             * Normalize adapters
+             */
+            def adapter_5 = (row.adapter_5 && row.adapter_5 != '0' && row.adapter_5 != 'NA')
+                ? row.adapter_5
+                : null
+
+            def adapter_3 = (row.adapter_3 && row.adapter_3 != '0' && row.adapter_3 != 'NA')
+                ? row.adapter_3
+                : null
+
+            /*
+             * Normalize UMI lengths
+             */
+            int umi5 = row.umi_5?.trim() ? row.umi_5.toInteger() : 0
+            int umi3 = row.umi_3?.trim() ? row.umi_3.toInteger() : 0
+
+            /*
+             * Generate UMI bc_pattern
+             */
+            def bc_pattern = null
+            if (umi5 > 0 || umi3 > 0) {
+                def parts = []
+                if (umi5 > 0) parts << "(?P<umi_1>.{${umi5}})"
+                parts << ".+"
+                if (umi3 > 0) parts << "(?P<umi_2>.{${umi3}})"
+                bc_pattern = "^${parts.join('')}\$"
+            }
+
+            def has_umi = bc_pattern != null
+
+            /*
+             * Optional sanity warning
+             */
+            if (has_umi && adapter_5 == null && adapter_3 == null) {
+                log.warn "Sample ${row.sample_id}: UMI specified but no adapters provided"
+            }
 
             tuple(
                 row.sample_id,
                 file(row.fastq),
-                row.adapter,
-                row.bc_pattern,
+                adapter_5,
+                adapter_3,
+                bc_pattern,
                 has_umi
             )
         }

@@ -2,29 +2,31 @@ process UMI_EXTRACT {
 
     tag "$sample_id"
 
-    // Always publish logs
-    publishDir "${params.outdir}/preprocess/umi_extract/logs",
+    conda "bioconda::umi_tools=1.1.4"
+
+    /*
+     * Single publishDir:
+     * - logs always published
+     * - FASTQ published only if params.publish_fastq
+     */
+    publishDir "${params.outdir}/preprocess/umi_extract",
         mode: 'copy',
         saveAs: { file ->
-            file.name.endsWith('.log')
-                ? "${sample_id}/${file.name}"
-                : null
-        }
+            def fname = file instanceof Path ? file.name : file.toString()
 
-    // Publish FASTQ only if explicitly requested
-    publishDir {
-        if (params.publish_fastq) {
-            path "${params.outdir}/preprocess/umi_extract/fastq"
-            mode 'copy'
-            saveAs: { file ->
-                file.name.endsWith('.fastq.gz')
-                    ? "${sample_id}/${file.name}"
-                    : null
+            // always publish logs
+            if (fname.endsWith('.log')) {
+                return "${sample_id}/${fname}"
             }
-        }
-    }
 
-    conda "bioconda::umi_tools=1.1.4"
+            // publish FASTQ only if enabled
+            if (fname.endsWith('.fastq.gz') && params.publish_fastq) {
+                return "${sample_id}/${fname}"
+            }
+
+            // otherwise: do not publish
+            return null
+        }
 
     input:
         tuple val(sample_id), path(reads), val(bc_pattern)
