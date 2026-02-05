@@ -2,9 +2,27 @@ process UMI_EXTRACT {
 
     tag "$sample_id"
 
-    publishDir "${params.outdir}/preprocess/umi_extract",
-               mode: 'copy',
-               saveAs: { file -> "${sample_id}/${file}" }
+    // Always publish logs
+    publishDir "${params.outdir}/preprocess/umi_extract/logs",
+        mode: 'copy',
+        saveAs: { file ->
+            file.name.endsWith('.log')
+                ? "${sample_id}/${file.name}"
+                : null
+        }
+
+    // Publish FASTQ only if explicitly requested
+    publishDir {
+        if (params.publish_fastq) {
+            path "${params.outdir}/preprocess/umi_extract/fastq"
+            mode 'copy'
+            saveAs: { file ->
+                file.name.endsWith('.fastq.gz')
+                    ? "${sample_id}/${file.name}"
+                    : null
+            }
+        }
+    }
 
     conda "bioconda::umi_tools=1.1.4"
 

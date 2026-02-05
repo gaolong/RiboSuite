@@ -4,9 +4,27 @@ process CUTADAPT_TRIM {
 
     conda "bioconda::cutadapt=4.9 bioconda::seqtk"
 
-    publishDir "${params.outdir}/cutadapt",
+    // Always publish logs
+    publishDir "${params.outdir}/cutadapt/logs",
         mode: 'copy',
-        saveAs: { file -> "${sample_id}/${file}" }
+        saveAs: { file ->
+            file.name.endsWith('.log')
+                ? "${sample_id}/${file.name}"
+                : null
+        }
+
+    // Optionally publish FASTQs
+    publishDir {
+        if (params.publish_fastq) {
+            path "${params.outdir}/cutadapt/fastq"
+            mode 'copy'
+            saveAs { file ->
+                file.name.endsWith('.fastq.gz')
+                    ? "${sample_id}/${file.name}"
+                    : null
+            }
+        }
+    }
 
     input:
         tuple val(sample_id), path(reads), val(adapter), val(bc_pattern)
