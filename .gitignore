@@ -13,6 +13,8 @@ results/
 __pycache__/
 *.pyc
 
+ops/
+
 # Logs
 *.log
 
