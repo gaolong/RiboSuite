@@ -442,10 +442,10 @@ def main():
                 else:
                     region = "3UTR"
             else:
-                in_cds = m["cds_hi_tx"] <= tx_pos < m["cds_lo_tx"]
+                in_cds = m["cds_lo_tx"] < tx_pos <= m["cds_hi_tx"]
                 if in_cds:
                     region = "CDS"
-                elif tx_pos < m["cds_hi_tx"]:
+                elif tx_pos <= m["cds_lo_tx"]:
                     region = "3UTR"
                 else:
                     region = "5UTR"
