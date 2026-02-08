@@ -90,6 +90,26 @@ def genomic_to_tx_spliced(pos, exons, strand):
             return tx_s + (pos - s)
     return None
 
+# --------------------------------------------------
+# choose the longest tx for each gene
+# --------------------------------------------------
+def keep_longest_tx_per_gene(models):
+    """
+    Keep one transcript per gene: the one with the longest CDS.
+    """
+    best = {}
+
+    for m in models:
+        gene = m["gene"]
+        cds_len = m["fetch_end"] - m["fetch_start"]
+
+        if gene not in best or cds_len > best[gene]["cds_len"]:
+            best[gene] = {
+                "model": m,
+                "cds_len": cds_len
+            }
+
+    return [v["model"] for v in best.values()]
 
 # --------------------------------------------------
 # load transcript models
@@ -337,6 +357,7 @@ def main():
     bam = pysam.AlignmentFile(args.bam, "rb")
 
     models = load_tx_models(args.gtf, args.min_cds_len)
+    models = keep_longest_tx_per_gene(models)
     start_tx = load_start_codons(args.gtf)
     models = [m for m in models if (m["gene"], m["tx"]) in start_tx]
 
