@@ -7,6 +7,12 @@ from collections import defaultdict
 import re
 
 # --------------------------------------------------
+# constants
+# --------------------------------------------------
+MIN_OUTPUT_PSITES = 10
+MIN_COVERAGE_FRACTION = 0.25
+
+# --------------------------------------------------
 # CLI
 # --------------------------------------------------
 def parse_args():
@@ -50,7 +56,7 @@ def genomic_to_tx_spliced(pos, exons, strand):
     return None
 
 # --------------------------------------------------
-# load transcript models (adapted from frame_periodicity.py)
+# load transcript models
 # --------------------------------------------------
 def load_tx_models(gtf, min_len_codons):
     tx_exons = defaultdict(list)
@@ -58,6 +64,7 @@ def load_tx_models(gtf, min_len_codons):
     tx_start = defaultdict(list)
     tx_stop = defaultdict(list)
     gene_type = {}
+    gene_name = {}
 
     with open(gtf) as f:
         for line in f:
@@ -69,9 +76,12 @@ def load_tx_models(gtf, min_len_codons):
             attrs = parse_attrs(attr)
 
             if feature == "gene":
-                gene_type[attrs["gene_id"]] = (
-                    attrs.get("gene_type") or attrs.get("gene_biotype")
-                )
+                gid = attrs.get("gene_id")
+                if gid:
+                    gene_type[gid] = (
+                        attrs.get("gene_type") or attrs.get("gene_biotype")
+                    )
+                    gene_name[gid] = attrs.get("gene_name", "")
                 continue
 
             gene = attrs.get("gene_id")
@@ -107,34 +117,24 @@ def load_tx_models(gtf, min_len_codons):
         if cds_len < min_len_codons * 3:
             continue
 
-        # sort exons
         exons.sort(key=lambda x: x[0])
 
-        # build spliced transcript coordinates
         tx_pos = []
         cursor = 0
         for s, e in exons:
             tx_pos.append((s, e, cursor))
             cursor += (e - s)
 
-        # start codon
         if strand == "+":
             sc_g = min(s for s, e in tx_start[key])
-        else:
-            sc_g = max(e for s, e in tx_start[key]) - 1
-
-        sc_tx = genomic_to_tx_spliced(sc_g, tx_pos, strand)
-        if sc_tx is None:
-            continue
-
-        # stop codon
-        if strand == "+":
             st_g = max(e for s, e in tx_stop[key]) - 1
         else:
+            sc_g = max(e for s, e in tx_start[key]) - 1
             st_g = min(s for s, e in tx_stop[key])
 
+        sc_tx = genomic_to_tx_spliced(sc_g, tx_pos, strand)
         st_tx = genomic_to_tx_spliced(st_g, tx_pos, strand)
-        if st_tx is None:
+        if sc_tx is None or st_tx is None:
             continue
 
         cds_lo_tx = min(sc_tx, st_tx)
@@ -142,6 +142,7 @@ def load_tx_models(gtf, min_len_codons):
 
         models[tx] = {
             "gene": gene,
+            "gene_name": gene_name.get(gene, ""),
             "tx": tx,
             "chrom": chrom,
             "strand": strand,
@@ -161,6 +162,8 @@ def load_tx_models(gtf, min_len_codons):
 def assign_psites_to_tx(bam, offsets, m, mapq):
     fcounts = [0, 0, 0]
     total = 0
+    codons_with_psite = set()
+
     strand = m["strand"]
     sc_tx = m["start_codon_tx"]
 
@@ -191,7 +194,6 @@ def assign_psites_to_tx(bam, offsets, m, mapq):
         if not (m["cds_lo_tx"] <= tx_pos < m["cds_hi_tx"]):
             continue
 
-        # FRAME (identical to frame_periodicity.py)
         if strand == "+":
             frame = (tx_pos - sc_tx) % 3
         else:
@@ -200,7 +202,16 @@ def assign_psites_to_tx(bam, offsets, m, mapq):
         fcounts[frame] += 1
         total += 1
 
-    return total, fcounts
+        codon_idx = (tx_pos - m["cds_lo_tx"]) // 3
+        codons_with_psite.add(codon_idx)
+
+    cds_len_codons = (m["cds_hi_tx"] - m["cds_lo_tx"]) // 3
+    coverage_fraction = (
+        len(codons_with_psite) / cds_len_codons
+        if cds_len_codons > 0 else 0.0
+    )
+
+    return total, fcounts, coverage_fraction
 
 # --------------------------------------------------
 # rules
@@ -213,9 +224,12 @@ def rule_frame_dominance(fcounts, min_fraction):
     s = sum(fcounts)
     if s == 0:
         return False, 0.0
-    top = max(fcounts)
-    frac = top / s
+    frac = max(fcounts) / s
     return frac >= min_fraction, frac
+
+
+def rule_coverage_fraction(cov_frac, min_cov):
+    return cov_frac >= min_cov
 
 # --------------------------------------------------
 # main
@@ -231,9 +245,13 @@ def main():
     rows = []
 
     for tx, m in tx_models.items():
-        total, fcounts = assign_psites_to_tx(
+        total, fcounts, cov_frac = assign_psites_to_tx(
             bam, offsets, m, args.mapq
         )
+
+        # hard output filter
+        if total < MIN_OUTPUT_PSITES:
+            continue
 
         rules_passed = []
         rules_failed = []
@@ -251,14 +269,21 @@ def main():
         else:
             rules_failed.append("frame_dominance")
 
+        if rule_coverage_fraction(cov_frac, MIN_COVERAGE_FRACTION):
+            rules_passed.append("coverage_fraction")
+        else:
+            rules_failed.append("coverage_fraction")
+
         rows.append({
             "gene_id": m["gene"],
+            "gene_name": m["gene_name"],
             "transcript_id": tx,
             "psite_total": total,
             "psite_f0": fcounts[0],
             "psite_f1": fcounts[1],
             "psite_f2": fcounts[2],
             "frame_fraction": round(frac, 3),
+            "coverage_fraction": round(cov_frac, 3),
             "rules_passed": ",".join(rules_passed),
             "rules_failed": ",".join(rules_failed),
         })
