@@ -51,9 +51,6 @@ def parse_args():
     p.add_argument("--inframe_only", action="store_true",
                    help="Only count frame-0 P-sites relative to CDS start (recommended for ribo QC/TE)")
 
-    # Paired-end note: ribo is usually single-end. If paired BAM is supplied, count read1 only to avoid double counting.
-    p.add_argument("--paired_end", action="store_true",
-                   help="Treat BAM as paired-end; count read1 only (default: auto-detect)")
 
     return p.parse_args()
 
@@ -273,9 +270,6 @@ def main():
 
     bam = pysam.AlignmentFile(args.bam, "rb")
 
-    # Decide paired-end mode
-    paired_mode = args.paired_end
-
     for read in bam.fetch(until_eof=True):
         stats["reads_seen"] += 1
 
@@ -292,17 +286,6 @@ def main():
             stats["low_mapq"] += 1
             continue
 
-        # Auto-detect paired reads if not explicitly set
-        if not paired_mode and read.is_paired:
-            paired_mode = True
-        if paired_mode:
-            # Count read1 only to avoid double-counting fragments
-            if not read.is_read1:
-                stats["paired_read2_skipped"] += 1
-                continue
-            if read.is_paired and not read.is_proper_pair:
-                stats["improper_pair_skipped"] += 1
-                continue
 
         psite = get_psite(read, offsets)
         if psite is None:
