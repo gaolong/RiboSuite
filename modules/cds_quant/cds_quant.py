@@ -46,8 +46,8 @@ def parse_args():
     p.add_argument("--min_mapq", type=int, default=100, help="Minimum MAPQ (default: 100)")
     p.add_argument("--include_duplicates", action="store_true",
                    help="Include PCR/optical duplicates (default: excluded if flagged)")
-    p.add_argument("--allow_multi_overlap", action="store_true",
-                   help="If P-site overlaps multiple genes, count it for ALL (default: skip as ambiguous)")
+    p.add_argument("--skip_multi_overlap", action="store_true",
+                   help="If P-site overlaps multiple genes, skip it as ambiguous (default: count all)")
     p.add_argument("--inframe_only", action="store_true",
                    help="Only count frame-0 P-sites relative to CDS start (recommended for ribo QC/TE)")
 
@@ -309,7 +309,7 @@ def main():
             continue
 
         # Ambiguity handling (multi-gene overlap)
-        if (not args.allow_multi_overlap) and len({g for g, _ in strand_hits}) > 1:
+        if args.skip_multi_overlap and len({g for g, _ in strand_hits}) > 1:
             stats["ambiguous_multi_gene"] += 1
             continue
 
