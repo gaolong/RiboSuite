@@ -14,8 +14,8 @@ Conventions:
 from collections import defaultdict
 from typing import Dict, List, Tuple, Any, Optional
 
-from psite_utils import parse_attrs, genomic_to_tx_spliced
-from intervals import merge_intervals, subtract_intervals
+from bin.psite_utils import parse_attrs, genomic_to_tx_spliced
+from bin.intervals import merge_intervals, subtract_intervals
 
 
 def keep_longest_tx_per_gene(models: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -152,7 +152,7 @@ def load_tx_models(
         cds_hi_tx = max(e for _, e in cds_tx_intervals)
 
         # Anchor frame at CDS start (no phase)
-        anchor_tx = cds_lo_tx
+        anchor_tx = cds_lo_tx if strand == "+" else (cds_hi_tx - 1)
 
         # Derive UTR intervals = exon - CDS (all in tx coords)
         utr_tx_intervals = subtract_intervals(exon_tx_intervals, cds_tx_intervals)
