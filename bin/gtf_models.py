@@ -60,22 +60,26 @@ def _tx_intervals_from_genomic_blocks(
     return merge_intervals(out)
 
 
-def load_tx_models_cds_only(
+def load_tx_models(
     gtf: str,
     min_cds_len: int = 0,
     protein_coding_only: bool = False,
-) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+) -> List[Dict[str, Any]]:
     """
     Build models using exon + CDS features only.
 
     protein_coding_only:
       - True for GENCODE-like transcript QC
       - False for ORF GTFs (recommended)
+
+    Returns:
+      models: List[dict] (no tx_meta; redundant)
     """
 
     tx_exons = defaultdict(list)  # key -> [(s,e)]
     tx_cds = defaultdict(list)    # key -> [(s,e)]
-    gene_type = {}
+    gene_type: Dict[str, str] = {}
+    gene_name: Dict[str, str] = {}
 
     with open(gtf) as f:
         for line in f:
@@ -88,16 +92,26 @@ def load_tx_models_cds_only(
             chrom, _src, feature, start, end, _score, strand, _phase, attr = fields
             attrs = parse_attrs(attr)
 
+            # Capture gene-level metadata when present
             if feature == "gene":
                 gid = attrs.get("gene_id")
                 if gid:
                     gene_type[gid] = attrs.get("gene_type") or attrs.get("gene_biotype")
+                    # Prefer explicit gene_name, otherwise keep any existing value
+                    gname = attrs.get("gene_name")
+                    if gname:
+                        gene_name[gid] = gname
                 continue
 
             gene = attrs.get("gene_id")
             tx = attrs.get("transcript_id")
             if not gene or not tx:
                 continue
+
+            # Some GTFs repeat gene_name on transcript/exon/CDS lines; capture it too
+            gname = attrs.get("gene_name")
+            if gname and gene not in gene_name:
+                gene_name[gene] = gname
 
             if protein_coding_only and gene_type.get(gene) != "protein_coding":
                 continue
@@ -112,7 +126,6 @@ def load_tx_models_cds_only(
                 tx_cds[key].append((start0, end0))
 
     models: List[Dict[str, Any]] = []
-    tx_meta: Dict[str, Dict[str, Any]] = {}
 
     for key, exons in tx_exons.items():
         gene, tx, chrom, strand = key
@@ -132,7 +145,6 @@ def load_tx_models_cds_only(
         # Convert CDS genomic blocks -> tx intervals (spliced)
         cds_tx_intervals = _tx_intervals_from_genomic_blocks(cds_blocks, exons_txpos)
         if not cds_tx_intervals:
-            # CDS blocks didn't overlap exons in a mappable way
             continue
 
         # Translation bounds in tx coords = union CDS span
@@ -140,18 +152,17 @@ def load_tx_models_cds_only(
         cds_hi_tx = max(e for _, e in cds_tx_intervals)
 
         # Anchor frame at CDS start (no phase)
-        # For minus strand, this still anchors at the "leftmost in tx coords" CDS start,
-        # which is consistent with using tx coords and frame formula that accounts for strand.
         anchor_tx = cds_lo_tx
 
         # Derive UTR intervals = exon - CDS (all in tx coords)
         utr_tx_intervals = subtract_intervals(exon_tx_intervals, cds_tx_intervals)
 
-        fetch_start = min(s for s, e in exons)
-        fetch_end = max(e for s, e in exons)
+        fetch_start = min(s for s, _e in exons)
+        fetch_end = max(e for _s, e in exons)
 
         model = {
             "gene": gene,
+            "gene_name": gene_name.get(gene), 
             "tx": tx,
             "chrom": chrom,
             "strand": strand,
@@ -172,19 +183,4 @@ def load_tx_models_cds_only(
         }
         models.append(model)
 
-        tx_meta[tx] = {
-            "gene": gene,
-            "chrom": chrom,
-            "strand": strand,
-            "cds_tx": cds_tx_intervals,
-            "utr_tx": utr_tx_intervals,
-            "cds_lo_tx": cds_lo_tx,
-            "cds_hi_tx": cds_hi_tx,
-            "anchor_tx": anchor_tx,
-            "cds_len": cds_len,
-            "tx_len": tx_len,
-            "fetch_start": fetch_start,
-            "fetch_end": fetch_end,
-        }
-
-    return models, tx_meta
+    return models
