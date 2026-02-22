@@ -24,7 +24,7 @@ def parse_args():
     )
     ap.add_argument("--bam", required=True)
     ap.add_argument("--gtf", required=True)
-    ap.add_argument("--offset", required=True)
+    ap.add_argument("--psite_offsets", required=True)
     ap.add_argument("--sample", required=True)
     ap.add_argument("--min_cds_len", type=int, default=0)
     ap.add_argument("--top_tx", type=int, default=15000)
@@ -352,7 +352,7 @@ def load_tx_models(gtf, min_cds_len):
 def main():
     args = parse_args()
 
-    offsets = load_offsets(args.offset)
+    offsets = load_offsets(args.psite_offsets)
     max_offset = max(offsets.values())
     bam = pysam.AlignmentFile(args.bam, "rb")
 
