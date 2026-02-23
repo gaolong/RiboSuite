@@ -1,10 +1,39 @@
 #!/usr/bin/env python3
+"""
+call_translated_orfs.py
+
+Rule-based identification of translated ORFs using CDS-only frame periodicity
+(no start/stop-codon dependency).
+
+This version reuses shared utilities in bin/:
+- bin.gtf_models.load_tx_models
+- bin.psite_utils.load_offsets, get_psite, genomic_to_tx_spliced
+
+Key idea
+--------
+We compute a CDS-only coordinate (cds_pos) by accumulating across the CDS
+intervals in transcript coordinates. Frame is then cds_pos % 3.
+"""
 
 import argparse
+from collections import defaultdict
+
 import pysam
 import pandas as pd
-from collections import defaultdict
-import re
+
+# --------------------------------------------------
+# Ensure imports from project root work
+# --------------------------------------------------
+import os
+import sys
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../../"))
+sys.path.insert(0, ROOT_DIR)
+
+from bin.gtf_models import load_tx_models
+from bin.psite_utils import load_offsets, get_psite, genomic_to_tx_spliced
+
 
 # --------------------------------------------------
 # constants
@@ -12,206 +41,136 @@ import re
 MIN_OUTPUT_PSITES = 10
 MIN_COVERAGE_FRACTION = 0.25
 
+
 # --------------------------------------------------
 # CLI
 # --------------------------------------------------
 def parse_args():
     p = argparse.ArgumentParser(
         description="Rule-based identification of translated ORFs "
-                    "using start-codon–anchored CDS frame periodicity"
+                    "using CDS-only frame periodicity (no start/stop-codon dependency)"
     )
     p.add_argument("--bam", required=True, help="Deduplicated, sorted BAM")
     p.add_argument("--gtf", required=True, help="GTF annotation")
-    p.add_argument("--psite_offsets", required=True, help="P-site offset table")
+    p.add_argument("--psite_offsets", required=True, help="P-site offset table (TSV)")
     p.add_argument("--out_prefix", required=True)
 
     p.add_argument("--min_psites", type=int, default=30)
-    p.add_argument("--min_len_codons", type=int, default=30)
+    p.add_argument("--min_len_codons", type=int, default=30,
+                   help="Minimum CDS length in codons (applied as min_cds_len = codons*3)")
     p.add_argument("--min_frame_fraction", type=float, default=0.7)
     p.add_argument("--mapq", type=int, default=100)
 
+    # Recommended default for ORF GTFs is False; for pure GENCODE QC set True.
+    p.add_argument(
+        "--protein_coding_only",
+        action="store_true",
+        help="Filter to protein_coding genes based on gene_type/gene_biotype in GTF"
+    )
+
     return p.parse_args()
 
-# --------------------------------------------------
-# offsets
-# --------------------------------------------------
-def load_psite_offsets(path):
-    df = pd.read_csv(path, sep="\t")
-    col = "psite_offset" if "psite_offset" in df.columns else "offset"
-    return dict(zip(df["read_length"].astype(int), df[col].astype(int)))
 
 # --------------------------------------------------
-# GTF helpers
+# helpers: tx_pos -> CDS-only coordinate
 # --------------------------------------------------
-def parse_attrs(attr):
-    return dict(re.findall(r'(\S+)\s+"([^"]+)"', attr))
+def cds_len_from_intervals(cds_tx_intervals):
+    """Total CDS length in nt from CDS tx intervals."""
+    return sum(e - s for s, e in cds_tx_intervals)
 
-# --------------------------------------------------
-# genomic → spliced transcript coordinate
-# --------------------------------------------------
-def genomic_to_tx_spliced(pos, exons, strand):
-    for s, e, tx_s in exons:
-        if s <= pos < e:
-            return tx_s + (pos - s)
+
+def tx_pos_to_cds_pos(tx_pos, cds_tx_intervals):
+    """
+    Convert transcript coordinate -> CDS-only coordinate by accumulating lengths
+    across CDS tx intervals (half-open [s,e)).
+
+    Returns:
+      cds_pos (0-based) if tx_pos is in CDS; otherwise None
+    """
+    acc = 0
+    for s, e in cds_tx_intervals:
+        if tx_pos < s:
+            break
+        if s <= tx_pos < e:
+            return acc + (tx_pos - s)
+        acc += (e - s)
     return None
 
-# --------------------------------------------------
-# load transcript models
-# --------------------------------------------------
-def load_tx_models(gtf, min_len_codons):
-    tx_exons = defaultdict(list)
-    tx_cds = defaultdict(list)
-    tx_start = defaultdict(list)
-    tx_stop = defaultdict(list)
-    gene_type = {}
-    gene_name = {}
-
-    with open(gtf) as f:
-        for line in f:
-            if line.startswith("#"):
-                continue
-            chrom, _, feature, start, end, _, strand, phase, attr = (
-                line.rstrip().split("\t")
-            )
-            attrs = parse_attrs(attr)
-
-            if feature == "gene":
-                gid = attrs.get("gene_id")
-                if gid:
-                    gene_type[gid] = (
-                        attrs.get("gene_type") or attrs.get("gene_biotype")
-                    )
-                    gene_name[gid] = attrs.get("gene_name", "")
-                continue
-
-            gene = attrs.get("gene_id")
-            tx = attrs.get("transcript_id")
-            if not gene or not tx:
-                continue
-            if gene_type.get(gene) != "protein_coding":
-                continue
-
-            start0 = int(start) - 1
-            end0 = int(end)
-            key = (gene, tx, chrom, strand)
-
-            if feature == "exon":
-                tx_exons[key].append((start0, end0))
-            elif feature == "CDS":
-                ph = 0 if phase == "." else int(phase)
-                tx_cds[key].append((start0, end0, ph))
-            elif feature == "start_codon":
-                tx_start[key].append((start0, end0))
-            elif feature == "stop_codon":
-                tx_stop[key].append((start0, end0))
-
-    models = {}
-
-    for key, exons in tx_exons.items():
-        gene, tx, chrom, strand = key
-
-        if key not in tx_cds or key not in tx_start or key not in tx_stop:
-            continue
-
-        cds_len = sum(e - s - ph for s, e, ph in tx_cds[key])
-        if cds_len < min_len_codons * 3:
-            continue
-
-        exons.sort(key=lambda x: x[0])
-
-        tx_pos = []
-        cursor = 0
-        for s, e in exons:
-            tx_pos.append((s, e, cursor))
-            cursor += (e - s)
-
-        if strand == "+":
-            sc_g = min(s for s, e in tx_start[key])
-            st_g = max(e for s, e in tx_stop[key]) - 1
-        else:
-            sc_g = max(e for s, e in tx_start[key]) - 1
-            st_g = min(s for s, e in tx_stop[key])
-
-        sc_tx = genomic_to_tx_spliced(sc_g, tx_pos, strand)
-        st_tx = genomic_to_tx_spliced(st_g, tx_pos, strand)
-        if sc_tx is None or st_tx is None:
-            continue
-
-        cds_lo_tx = min(sc_tx, st_tx)
-        cds_hi_tx = max(sc_tx, st_tx)
-
-        models[tx] = {
-            "gene": gene,
-            "gene_name": gene_name.get(gene, ""),
-            "tx": tx,
-            "chrom": chrom,
-            "strand": strand,
-            "exons": tx_pos,
-            "start_codon_tx": sc_tx,
-            "cds_lo_tx": cds_lo_tx,
-            "cds_hi_tx": cds_hi_tx,
-            "fetch_start": min(s for s, e in exons),
-            "fetch_end": max(e for s, e in exons),
-        }
-
-    return models
 
 # --------------------------------------------------
 # core logic
 # --------------------------------------------------
-def assign_psites_to_tx(bam, offsets, m, mapq):
+def assign_psites_to_model(bam, offsets, m, mapq):
+    """
+    Count P-sites mapped into CDS, by frame (tx_pos anchored at anchor_tx),
+    plus codon coverage in CDS space.
+
+    Frame definition (consistent with frame_periodicity):
+      + strand: frame = (tx_pos - anchor_tx) % 3
+      - strand: frame = (anchor_tx - tx_pos) % 3
+
+    Notes
+    -----
+    - Requires m["anchor_tx"] to represent the translation start position in tx coords
+      (strand-aware start codon proxy). Fix in gtf_models:
+        anchor_tx = cds_lo_tx if strand == "+" else (cds_hi_tx - 1)
+    - Coverage is computed in CDS-only space by accumulating across cds_tx intervals.
+    """
     fcounts = [0, 0, 0]
     total = 0
     codons_with_psite = set()
 
+    chrom = m["chrom"]
     strand = m["strand"]
-    sc_tx = m["start_codon_tx"]
+    anchor_tx = m["anchor_tx"]
 
     max_offset = max(offsets.values())
     fs = max(0, m["fetch_start"] - max_offset)
     fe = m["fetch_end"] + max_offset
 
-    for read in bam.fetch(m["chrom"], fs, fe):
+    cds_tx = m["cds_tx"]  # list of (s,e) in tx coords (spliced)
+    cds_len_nt = cds_len_from_intervals(cds_tx)
+    cds_len_codons = cds_len_nt // 3
+
+    for read in bam.fetch(chrom, fs, fe):
         if read.is_unmapped or read.is_secondary or read.is_supplementary:
             continue
         if read.mapping_quality < mapq:
             continue
 
-        rl = read.query_length
-        if rl not in offsets:
+        psite, _rl = get_psite(read, offsets, strand=strand)
+        if psite is None:
             continue
 
-        psite = (
-            read.reference_start + offsets[rl]
-            if strand == "+"
-            else read.reference_end - offsets[rl] - 1
-        )
-
-        tx_pos = genomic_to_tx_spliced(psite, m["exons"], strand)
+        tx_pos = genomic_to_tx_spliced(psite, m["exons"])
         if tx_pos is None:
             continue
 
-        if not (m["cds_lo_tx"] <= tx_pos < m["cds_hi_tx"]):
+        # Must be in CDS for translated-ORF rules
+        cds_pos = tx_pos_to_cds_pos(tx_pos, cds_tx)
+        if cds_pos is None:
             continue
 
+        # Frame (anchored at translation start in tx coords)
         if strand == "+":
-            frame = (tx_pos - sc_tx) % 3
+            frame = (tx_pos - anchor_tx) % 3
         else:
-            frame = (sc_tx - tx_pos) % 3
+            frame = (anchor_tx - tx_pos) % 3
 
         fcounts[frame] += 1
         total += 1
 
-        codon_idx = (tx_pos - m["cds_lo_tx"]) // 3
-        codons_with_psite.add(codon_idx)
+        # Coverage: codon index in CDS-only coordinate space
+        if cds_len_codons > 0:
+            codons_with_psite.add(cds_pos // 3)
 
-    cds_len_codons = (m["cds_hi_tx"] - m["cds_lo_tx"]) // 3
     coverage_fraction = (
         len(codons_with_psite) / cds_len_codons
         if cds_len_codons > 0 else 0.0
     )
 
     return total, fcounts, coverage_fraction
+
 
 # --------------------------------------------------
 # rules
@@ -231,21 +190,33 @@ def rule_frame_dominance(fcounts, min_fraction):
 def rule_coverage_fraction(cov_frac, min_cov):
     return cov_frac >= min_cov
 
+
 # --------------------------------------------------
 # main
 # --------------------------------------------------
 def main():
     args = parse_args()
 
-    offsets = load_psite_offsets(args.psite_offsets)
+    offsets = load_offsets(args.psite_offsets)
+    if not offsets:
+        raise RuntimeError("No offsets loaded")
+
     bam = pysam.AlignmentFile(args.bam, "rb")
 
-    tx_models = load_tx_models(args.gtf, args.min_len_codons)
+    # Reuse shared transcript/CDS models
+    models = load_tx_models(
+        args.gtf,
+        min_cds_len=args.min_len_codons * 3,
+        protein_coding_only=args.protein_coding_only,
+    )
+
+    if not models:
+        raise RuntimeError("No transcript models loaded (check GTF features/attrs)")
 
     rows = []
 
-    for tx, m in tx_models.items():
-        total, fcounts, cov_frac = assign_psites_to_tx(
+    for m in models:
+        total, fcounts, cov_frac = assign_psites_to_model(
             bam, offsets, m, args.mapq
         )
 
@@ -261,9 +232,7 @@ def main():
         else:
             rules_failed.append("min_psites")
 
-        ok_frame, frac = rule_frame_dominance(
-            fcounts, args.min_frame_fraction
-        )
+        ok_frame, frac = rule_frame_dominance(fcounts, args.min_frame_fraction)
         if ok_frame:
             rules_passed.append("frame_dominance")
         else:
@@ -276,8 +245,8 @@ def main():
 
         rows.append({
             "gene_id": m["gene"],
-            "gene_name": m["gene_name"],
-            "transcript_id": tx,
+            "gene_name": m.get("gene_name"),
+            "transcript_id": m["tx"],
             "psite_total": total,
             "psite_f0": fcounts[0],
             "psite_f1": fcounts[1],
@@ -289,13 +258,11 @@ def main():
         })
 
     df = pd.DataFrame(rows)
-    df.to_csv(
-        f"{args.out_prefix}.translated_orfs.tsv",
-        sep="\t",
-        index=False
-    )
+    out_tsv = f"{args.out_prefix}.translated_orfs.tsv"
+    df.to_csv(out_tsv, sep="\t", index=False)
 
-    print(f"[translated_orfs] written {args.out_prefix}.translated_orfs.tsv")
+    print(f"[translated_orfs] written {out_tsv}")
+
 
 if __name__ == "__main__":
     main()
