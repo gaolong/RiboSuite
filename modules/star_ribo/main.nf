@@ -4,7 +4,7 @@ process STAR_RIBO_ALIGN {
 
     conda "bioconda::star=2.7.11b"
 
-    publishDir "${params.outdir}/align/star_ribo",
+    publishDir "${params.outdir}/ribo/align/star_ribo",
                mode: 'copy',
                saveAs: { file -> "${sample_id}/${file}" }
 

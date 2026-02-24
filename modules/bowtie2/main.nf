@@ -11,7 +11,7 @@ process BOWTIE2_FILTER {
      * - logs always published
      * - FASTQ published only if params.publish_fastq
      */
-    publishDir "${params.outdir}/align/bowtie2_filter",
+    publishDir "${params.outdir}/ribo/align/bowtie2_filter",
         mode: 'copy',
         saveAs: { file ->
             def fname = file instanceof Path ? file.name : file.toString()

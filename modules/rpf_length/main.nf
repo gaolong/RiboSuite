@@ -2,7 +2,7 @@ process RPF_LENGTH_QC {
 
     tag "$sample_id"
 
-    publishDir "${params.outdir}/qc/rpf_length",
+    publishDir "${params.outdir}/ribo/qc/rpf_length",
         mode: 'copy',
         saveAs: { file -> "${sample_id}/${file}" }
 

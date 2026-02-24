@@ -4,7 +4,7 @@ process UMI_DEDUP {
 
     conda "bioconda::umi_tools=1.1.4 bioconda::samtools=1.20"
 
-    publishDir "${params.outdir}/align/umi_dedup",
+    publishDir "${params.outdir}/ribo/align/umi_dedup",
         mode: 'copy',
         saveAs: { file ->
             file.toString().endsWith('.umi_survivors.qnames.txt')

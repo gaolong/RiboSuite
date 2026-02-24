@@ -7,7 +7,7 @@ process METAGENE_QC {
            conda-forge::python=3.10 conda-forge::pandas=2.2.2 \
            conda-forge::numpy=2.0.1 conda-forge::matplotlib=3.9.1"
 
-    publishDir "${params.outdir}/metagene",
+    publishDir "${params.outdir}/ribo/metagene",
         mode: 'copy',
         pattern: "*.{png,tsv}"
 

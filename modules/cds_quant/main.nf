@@ -4,7 +4,7 @@ process CDS_QUANT {
 
     conda "conda-forge::python=3.11 conda-forge::pandas bioconda::pysam"
 
-    publishDir "${params.outdir}/cds_quant",
+    publishDir "${params.outdir}/ribo/cds_quant",
         mode: 'copy',
         pattern: "${sample_id}.cds_quant*.tsv"
 

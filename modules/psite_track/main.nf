@@ -4,7 +4,7 @@ process PSITE_TRACK {
 
     conda "conda-forge::pandas bioconda::pysam bioconda::samtools=1.18 bioconda::bedtools=2.31.0 bioconda::ucsc-bedgraphtobigwig"
 
-    publishDir "${params.outdir}/psite_tracks/",
+    publishDir "${params.outdir}/ribo/psite_tracks/",
         mode: 'copy',
         pattern: "*.bw"
 

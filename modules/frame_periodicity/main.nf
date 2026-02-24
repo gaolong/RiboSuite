@@ -4,7 +4,7 @@ process FRAME_PERIODICITY_QC {
 
     conda "bioconda::pysam=0.22.0 conda-forge::matplotlib conda-forge::pandas"
 
-    publishDir "${params.outdir}/qc/frame_periodicity",
+    publishDir "${params.outdir}/ribo/qc/frame_periodicity",
         mode: 'copy',
         saveAs: { file -> "${sample_id}/${file}" }
 

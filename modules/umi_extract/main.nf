@@ -9,7 +9,7 @@ process UMI_EXTRACT {
      * - logs always published
      * - FASTQ published only if params.publish_fastq
      */
-    publishDir "${params.outdir}/preprocess/umi_extract",
+    publishDir "${params.outdir}/ribo/preprocess/umi_extract",
         mode: 'copy',
         saveAs: { file ->
             def fname = file instanceof Path ? file.name : file.toString()

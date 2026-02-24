@@ -4,7 +4,7 @@ process FASTQC {
 
     conda "bioconda::fastqc=0.12.1"
 
-    publishDir "${params.outdir}/qc/fastqc",
+    publishDir "${params.outdir}/ribo/qc/fastqc",
         mode: 'copy',
         pattern: "*_fastqc.{html,zip}",
         saveAs: { file -> "${sample_id}/${file}" }

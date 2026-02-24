@@ -4,7 +4,7 @@ process CUTADAPT_TRIM {
 
     conda "bioconda::cutadapt=4.9 bioconda::seqtk"
 
-    publishDir "${params.outdir}/cutadapt",
+    publishDir "${params.outdir}/ribo/cutadapt",
         mode: 'copy',
         saveAs: { file ->
             def fname = file instanceof Path ? file.name : file.toString()
