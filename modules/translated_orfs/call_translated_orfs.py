@@ -11,22 +11,32 @@ This version reuses shared utilities in bin/:
 
 Key idea
 --------
-We compute a CDS-only coordinate (cds_pos) by accumulating across the CDS
-intervals in transcript coordinates. Frame is then cds_pos % 3.
+We compute an anchor-relative coordinate (rel) in transcript (spliced) space:
+  + strand: rel = tx_pos - anchor_tx
+  - strand: rel = anchor_tx - tx_pos
+Frame is then rel % 3 and codon index is rel // 3.
 
 Update (Uniformity)
 -------------------
-In addition to codon coverage ("coverage_fraction"), we compute "uniformity":
+Uniformity is computed as the fraction of CDS codons whose per-codon periodicity
+in translating position (frame 0 relative to anchor) exceeds a threshold.
 
-  For each codon, compute the fraction of P-sites that land in the translating
-  position (frame 0 relative to anchor) among all P-sites in that codon.
-  Count codons where this fraction > threshold (default 1/3), and divide by
-  total codons in ORF.
+Update (Drop-off)
+-----------------
+We compute a stop-codon drop-off metric using a symmetric window of N codons
+around the CDS end, counting only translating-frame (frame 0) P-sites:
 
-  uniformity = (# codons with per-codon periodicity > threshold) / (total codons)
+  upstream   = frame0 P-sites in last N CDS codons
+  downstream = frame0 P-sites in first N codons immediately after CDS end
+  dropoff_raw = upstream / (upstream + downstream)
 
-NOTE: In this implementation, the translating position is defined as frame 0
-relative to anchor_tx (i.e., rel % 3 == 0).
+Because dropoff_raw collapses low-support extremes (e.g., up=1,down=0 vs up=100,down=0),
+we also report:
+  dropoff_den_f0 = upstream + downstream   (evidence)
+  dropoff_smoothed = (upstream + alpha) / (upstream + downstream + alpha + beta)
+
+We optionally suppress dropoff_raw when evidence is too low (denom < min_dropoff_den_f0),
+setting dropoff_status="low_support".
 """
 
 import argparse
@@ -55,6 +65,11 @@ from bin.psite_utils import load_offsets, get_psite, genomic_to_tx_spliced
 MIN_COVERAGE_FRACTION = 0.25
 DEFAULT_UNIFORMITY_THRESHOLD = 1.0 / 3.0
 
+DEFAULT_DROPOFF_WINDOW_CODONS = 10
+DEFAULT_DROPOFF_ALPHA = 1.0
+DEFAULT_DROPOFF_BETA = 10.0
+DEFAULT_MIN_DROPOFF_DEN_F0 = 5
+
 
 # --------------------------------------------------
 # CLI
@@ -70,8 +85,12 @@ def parse_args():
     p.add_argument("--out_prefix", required=True)
 
     p.add_argument("--min_psites", type=int, default=30)
-    p.add_argument("--min_len_codons", type=int, default=30,
-                   help="Minimum CDS length in codons (applied as min_cds_len = codons*3)")
+    p.add_argument(
+        "--min_len_codons",
+        type=int,
+        default=30,
+        help="Minimum CDS length in codons (applied as min_cds_len = codons*3)",
+    )
     p.add_argument("--min_frame_fraction", type=float, default=0.7)
     p.add_argument("--mapq", type=int, default=100)
 
@@ -80,14 +99,42 @@ def parse_args():
         "--uniformity_threshold",
         type=float,
         default=DEFAULT_UNIFORMITY_THRESHOLD,
-        help="Per-codon periodicity threshold for uniformity (default: 1/3)"
+        help="Per-codon periodicity threshold for uniformity (default: 1/3)",
+    )
+
+    # Drop-off metric settings
+    p.add_argument(
+        "--dropoff_window_codons",
+        type=int,
+        default=DEFAULT_DROPOFF_WINDOW_CODONS,
+        help="Window size (codons) for drop-off around CDS end (default: 10). "
+             "Counts frame0 P-sites in last N CDS codons vs first N codons after CDS end.",
+    )
+    p.add_argument(
+        "--dropoff_alpha",
+        type=float,
+        default=DEFAULT_DROPOFF_ALPHA,
+        help="Pseudo-count alpha for dropoff smoothing (default: 1.0).",
+    )
+    p.add_argument(
+        "--dropoff_beta",
+        type=float,
+        default=DEFAULT_DROPOFF_BETA,
+        help="Pseudo-count beta for dropoff smoothing (default: 1.0).",
+    )
+    p.add_argument(
+        "--min_dropoff_den_f0",
+        type=int,
+        default=DEFAULT_MIN_DROPOFF_DEN_F0,
+        help="Minimum (up+down) frame0 P-sites required to report dropoff_raw (default: 5). "
+             "dropoff_smoothed is still reported when denom>0.",
     )
 
     # Recommended default for ORF GTFs is False; for pure GENCODE QC set True.
     p.add_argument(
         "--protein_coding_only",
         action="store_true",
-        help="Filter to protein_coding genes based on gene_type/gene_biotype in GTF"
+        help="Filter to protein_coding genes based on gene_type/gene_biotype in GTF",
     )
 
     return p.parse_args()
@@ -122,24 +169,39 @@ def tx_pos_to_cds_pos(tx_pos, cds_tx_intervals):
 # --------------------------------------------------
 # core logic
 # --------------------------------------------------
-def assign_psites_to_model(bam, offsets, m, mapq, uniformity_threshold=DEFAULT_UNIFORMITY_THRESHOLD):
+def assign_psites_to_model(
+    bam,
+    offsets,
+    m,
+    mapq,
+    uniformity_threshold=DEFAULT_UNIFORMITY_THRESHOLD,
+    dropoff_window_codons=DEFAULT_DROPOFF_WINDOW_CODONS,
+    dropoff_alpha=DEFAULT_DROPOFF_ALPHA,
+    dropoff_beta=DEFAULT_DROPOFF_BETA,
+    min_dropoff_den_f0=DEFAULT_MIN_DROPOFF_DEN_F0,
+):
     """
     Count P-sites mapped into CDS, by frame (tx_pos anchored at anchor_tx),
-    plus codon coverage and uniformity in CDS space.
+    plus codon coverage, uniformity in CDS space, and stop-codon drop-off.
 
     Frame definition (consistent with frame_periodicity):
       + strand: frame = (tx_pos - anchor_tx) % 3
       - strand: frame = (anchor_tx - tx_pos) % 3
 
-    Notes
-    -----
-    - Requires m["anchor_tx"] to represent the translation start position in tx coords
-      (strand-aware start codon proxy). Fix in gtf_models:
-        anchor_tx = cds_lo_tx if strand == "+" else (cds_hi_tx - 1)
-    - Coverage is computed as fraction of CDS codons with >=1 P-site (any frame).
-    - Uniformity is computed by per-codon 3-nt periodicity:
-        periodicity_codon = (P-sites in translating position) / (P-sites in codon)
-      where translating position is frame 0 relative to anchor.
+    Drop-off bins are defined in translation-direction codon coordinates:
+      codon = rel // 3  where rel is anchor-relative (>=0).
+
+    Metrics
+    -------
+    - total/fcounts: CDS-only P-sites by frame
+    - coverage_fraction: fraction of CDS codons with >=1 P-site (any frame)
+    - uniformity: fraction of CDS codons where (frame0 / all_frames_in_codon) > threshold
+    - dropoff_up_f0: frame0 P-sites in last N CDS codons
+    - dropoff_down_f0: frame0 P-sites in first N codons after CDS end
+    - dropoff_den_f0: evidence (up+down)
+    - dropoff_raw: up/(up+down) if evidence >= min_dropoff_den_f0 else None
+    - dropoff_smoothed: (up+alpha)/(up+down+alpha+beta) if denom>0 else None
+    - dropoff_status: ok/no_signal/no_upstream/no_downstream/low_support
     """
     fcounts = [0, 0, 0]
     total = 0
@@ -156,8 +218,19 @@ def assign_psites_to_model(bam, offsets, m, mapq, uniformity_threshold=DEFAULT_U
     cds_len_nt = cds_len_from_intervals(cds_tx)
     cds_len_codons = cds_len_nt // 3
 
-    # codon index (anchor-relative) -> [pos0,pos1,pos2] counts
+    # codon index (anchor-relative) -> [pos0,pos1,pos2] counts (CDS only)
     codon_pos_counts = defaultdict(lambda: [0, 0, 0])
+
+    # Drop-off counters (frame0 only)
+    up_f0 = 0
+    down_f0 = 0
+
+    # Define drop-off codon windows (anchor-relative codon indices)
+    N = max(0, int(dropoff_window_codons))
+    up_start = max(0, cds_len_codons - N)
+    up_end = cds_len_codons
+    down_start = cds_len_codons
+    down_end = cds_len_codons + N
 
     for read in bam.fetch(chrom, fs, fe):
         if read.is_unmapped or read.is_secondary or read.is_supplementary:
@@ -173,55 +246,94 @@ def assign_psites_to_model(bam, offsets, m, mapq, uniformity_threshold=DEFAULT_U
         if tx_pos is None:
             continue
 
-        # Must be in CDS for translated-ORF rules
-        cds_pos = tx_pos_to_cds_pos(tx_pos, cds_tx)
-        if cds_pos is None:
-            continue
-
-        # Anchor-relative coordinate (periodicity axis)
+        # Anchor-relative coordinate (translation direction)
         if strand == "+":
             rel = tx_pos - anchor_tx
         else:
             rel = anchor_tx - tx_pos
 
-        # If anchor_tx is correct CDS start proxy, rel should be >= 0 for CDS reads.
+        # Exclude upstream of start (5'UTR direction)
         if rel < 0:
             continue
 
         frame = rel % 3
         codon = rel // 3
 
+        # -----------------------
+        # Drop-off (frame0 only)
+        # -----------------------
+        if N > 0 and frame == 0:
+            if up_start <= codon < up_end:
+                up_f0 += 1
+            elif down_start <= codon < down_end:
+                down_f0 += 1
+
+        # -----------------------
+        # CDS-only metrics below
+        # -----------------------
+        cds_pos = tx_pos_to_cds_pos(tx_pos, cds_tx)
+        if cds_pos is None:
+            continue
+
         fcounts[frame] += 1
         total += 1
 
-        # Only tally codons within CDS length
         if codon < cds_len_codons:
             codon_pos_counts[codon][frame] += 1
 
-    # Coverage fraction: codons with any P-site (any position)
+    # Coverage fraction
     codons_with_psite = sum(1 for v in codon_pos_counts.values() if sum(v) > 0)
-    coverage_fraction = (
-        codons_with_psite / cds_len_codons
-        if cds_len_codons > 0 else 0.0
-    )
+    coverage_fraction = (codons_with_psite / cds_len_codons) if cds_len_codons > 0 else 0.0
 
-    # Uniformity: codons where per-codon periodicity in translating position > threshold
-    # Translating position is frame 0 relative to anchor.
+    # Uniformity
     good = 0
     for v in codon_pos_counts.values():
         tot = v[0] + v[1] + v[2]
         if tot == 0:
             continue
-        periodicity = v[0] / tot
-        if periodicity > uniformity_threshold:
+        if (v[0] / tot) > uniformity_threshold:
             good += 1
 
-    uniformity = (
-        good / cds_len_codons
-        if cds_len_codons > 0 else 0.0
+    uniformity = (good / cds_len_codons) if cds_len_codons > 0 else 0.0
+
+    # Drop-off
+    denom = up_f0 + down_f0
+
+    if denom == 0:
+        dropoff_status = "no_signal"
+    elif up_f0 == 0:
+        dropoff_status = "no_upstream"
+    elif down_f0 == 0:
+        dropoff_status = "no_downstream"
+    else:
+        dropoff_status = "ok"
+
+    # Raw ratio only if enough evidence
+    if denom >= min_dropoff_den_f0:
+        dropoff_raw = up_f0 / denom
+    else:
+        dropoff_raw = None
+        if denom > 0:
+            dropoff_status = "low_support"
+
+    # Smoothed ratio (helpful even when downstream==0, and distinguishes low vs high support)
+    dropoff_smoothed = (
+        (up_f0 + dropoff_alpha) / (denom + dropoff_alpha + dropoff_beta)
+        if denom > 0 else None
     )
 
-    return total, fcounts, coverage_fraction, uniformity
+    return (
+        total,
+        fcounts,
+        coverage_fraction,
+        uniformity,
+        dropoff_raw,
+        dropoff_smoothed,
+        up_f0,
+        down_f0,
+        denom,
+        dropoff_status,
+    )
 
 
 # --------------------------------------------------
@@ -255,21 +367,38 @@ def main():
 
     bam = pysam.AlignmentFile(args.bam, "rb")
 
-    # Reuse shared transcript/CDS models
     models = load_tx_models(
         args.gtf,
         min_cds_len=args.min_len_codons * 3,
         protein_coding_only=args.protein_coding_only,
     )
-
     if not models:
         raise RuntimeError("No transcript models loaded (check GTF features/attrs)")
 
     rows = []
 
     for m in models:
-        total, fcounts, cov_frac, unif = assign_psites_to_model(
-            bam, offsets, m, args.mapq, uniformity_threshold=args.uniformity_threshold
+        (
+            total,
+            fcounts,
+            cov_frac,
+            unif,
+            dropoff_raw,
+            dropoff_smoothed,
+            up_f0,
+            down_f0,
+            drop_den,
+            drop_status,
+        ) = assign_psites_to_model(
+            bam,
+            offsets,
+            m,
+            args.mapq,
+            uniformity_threshold=args.uniformity_threshold,
+            dropoff_window_codons=args.dropoff_window_codons,
+            dropoff_alpha=args.dropoff_alpha,
+            dropoff_beta=args.dropoff_beta,
+            min_dropoff_den_f0=args.min_dropoff_den_f0,
         )
 
         # hard output filter
@@ -306,6 +435,16 @@ def main():
             "frame_fraction": round(frac, 3),
             "coverage_fraction": round(cov_frac, 3),
             "uniformity": round(unif, 3),
+
+            # Drop-off schema (ratio + evidence + status)
+            "dropoff_window_codons": args.dropoff_window_codons,
+            "dropoff_up_f0": up_f0,
+            "dropoff_down_f0": down_f0,
+            "dropoff_den_f0": drop_den,
+            "dropoff_status": drop_status,
+            "dropoff_raw": (round(dropoff_raw, 3) if dropoff_raw is not None else None),
+            "dropoff_smoothed": (round(dropoff_smoothed, 3) if dropoff_smoothed is not None else None),
+
             "rules_passed": ",".join(rules_passed),
             "rules_failed": ",".join(rules_failed),
         })
