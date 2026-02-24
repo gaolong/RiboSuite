@@ -13,6 +13,20 @@ Key idea
 --------
 We compute a CDS-only coordinate (cds_pos) by accumulating across the CDS
 intervals in transcript coordinates. Frame is then cds_pos % 3.
+
+Update (Uniformity)
+-------------------
+In addition to codon coverage ("coverage_fraction"), we compute "uniformity":
+
+  For each codon, compute the fraction of P-sites that land in the translating
+  position (frame 0 relative to anchor) among all P-sites in that codon.
+  Count codons where this fraction > threshold (default 1/3), and divide by
+  total codons in ORF.
+
+  uniformity = (# codons with per-codon periodicity > threshold) / (total codons)
+
+NOTE: In this implementation, the translating position is defined as frame 0
+relative to anchor_tx (i.e., rel % 3 == 0).
 """
 
 import argparse
@@ -38,8 +52,8 @@ from bin.psite_utils import load_offsets, get_psite, genomic_to_tx_spliced
 # --------------------------------------------------
 # constants
 # --------------------------------------------------
-MIN_OUTPUT_PSITES = 10
 MIN_COVERAGE_FRACTION = 0.25
+DEFAULT_UNIFORMITY_THRESHOLD = 1.0 / 3.0
 
 
 # --------------------------------------------------
@@ -60,6 +74,14 @@ def parse_args():
                    help="Minimum CDS length in codons (applied as min_cds_len = codons*3)")
     p.add_argument("--min_frame_fraction", type=float, default=0.7)
     p.add_argument("--mapq", type=int, default=100)
+
+    # Uniformity metric settings (metric computed regardless of rule usage)
+    p.add_argument(
+        "--uniformity_threshold",
+        type=float,
+        default=DEFAULT_UNIFORMITY_THRESHOLD,
+        help="Per-codon periodicity threshold for uniformity (default: 1/3)"
+    )
 
     # Recommended default for ORF GTFs is False; for pure GENCODE QC set True.
     p.add_argument(
@@ -100,10 +122,10 @@ def tx_pos_to_cds_pos(tx_pos, cds_tx_intervals):
 # --------------------------------------------------
 # core logic
 # --------------------------------------------------
-def assign_psites_to_model(bam, offsets, m, mapq):
+def assign_psites_to_model(bam, offsets, m, mapq, uniformity_threshold=DEFAULT_UNIFORMITY_THRESHOLD):
     """
     Count P-sites mapped into CDS, by frame (tx_pos anchored at anchor_tx),
-    plus codon coverage in CDS space.
+    plus codon coverage and uniformity in CDS space.
 
     Frame definition (consistent with frame_periodicity):
       + strand: frame = (tx_pos - anchor_tx) % 3
@@ -114,11 +136,13 @@ def assign_psites_to_model(bam, offsets, m, mapq):
     - Requires m["anchor_tx"] to represent the translation start position in tx coords
       (strand-aware start codon proxy). Fix in gtf_models:
         anchor_tx = cds_lo_tx if strand == "+" else (cds_hi_tx - 1)
-    - Coverage is computed in CDS-only space by accumulating across cds_tx intervals.
+    - Coverage is computed as fraction of CDS codons with >=1 P-site (any frame).
+    - Uniformity is computed by per-codon 3-nt periodicity:
+        periodicity_codon = (P-sites in translating position) / (P-sites in codon)
+      where translating position is frame 0 relative to anchor.
     """
     fcounts = [0, 0, 0]
     total = 0
-    codons_with_psite = set()
 
     chrom = m["chrom"]
     strand = m["strand"]
@@ -131,6 +155,9 @@ def assign_psites_to_model(bam, offsets, m, mapq):
     cds_tx = m["cds_tx"]  # list of (s,e) in tx coords (spliced)
     cds_len_nt = cds_len_from_intervals(cds_tx)
     cds_len_codons = cds_len_nt // 3
+
+    # codon index (anchor-relative) -> [pos0,pos1,pos2] counts
+    codon_pos_counts = defaultdict(lambda: [0, 0, 0])
 
     for read in bam.fetch(chrom, fs, fe):
         if read.is_unmapped or read.is_secondary or read.is_supplementary:
@@ -151,25 +178,50 @@ def assign_psites_to_model(bam, offsets, m, mapq):
         if cds_pos is None:
             continue
 
-        # Frame (anchored at translation start in tx coords)
+        # Anchor-relative coordinate (periodicity axis)
         if strand == "+":
-            frame = (tx_pos - anchor_tx) % 3
+            rel = tx_pos - anchor_tx
         else:
-            frame = (anchor_tx - tx_pos) % 3
+            rel = anchor_tx - tx_pos
+
+        # If anchor_tx is correct CDS start proxy, rel should be >= 0 for CDS reads.
+        if rel < 0:
+            continue
+
+        frame = rel % 3
+        codon = rel // 3
 
         fcounts[frame] += 1
         total += 1
 
-        # Coverage: codon index in CDS-only coordinate space
-        if cds_len_codons > 0:
-            codons_with_psite.add(cds_pos // 3)
+        # Only tally codons within CDS length
+        if codon < cds_len_codons:
+            codon_pos_counts[codon][frame] += 1
 
+    # Coverage fraction: codons with any P-site (any position)
+    codons_with_psite = sum(1 for v in codon_pos_counts.values() if sum(v) > 0)
     coverage_fraction = (
-        len(codons_with_psite) / cds_len_codons
+        codons_with_psite / cds_len_codons
         if cds_len_codons > 0 else 0.0
     )
 
-    return total, fcounts, coverage_fraction
+    # Uniformity: codons where per-codon periodicity in translating position > threshold
+    # Translating position is frame 0 relative to anchor.
+    good = 0
+    for v in codon_pos_counts.values():
+        tot = v[0] + v[1] + v[2]
+        if tot == 0:
+            continue
+        periodicity = v[0] / tot
+        if periodicity > uniformity_threshold:
+            good += 1
+
+    uniformity = (
+        good / cds_len_codons
+        if cds_len_codons > 0 else 0.0
+    )
+
+    return total, fcounts, coverage_fraction, uniformity
 
 
 # --------------------------------------------------
@@ -216,12 +268,12 @@ def main():
     rows = []
 
     for m in models:
-        total, fcounts, cov_frac = assign_psites_to_model(
-            bam, offsets, m, args.mapq
+        total, fcounts, cov_frac, unif = assign_psites_to_model(
+            bam, offsets, m, args.mapq, uniformity_threshold=args.uniformity_threshold
         )
 
         # hard output filter
-        if total < MIN_OUTPUT_PSITES:
+        if total < args.min_psites:
             continue
 
         rules_passed = []
@@ -253,6 +305,7 @@ def main():
             "psite_f2": fcounts[2],
             "frame_fraction": round(frac, 3),
             "coverage_fraction": round(cov_frac, 3),
+            "uniformity": round(unif, 3),
             "rules_passed": ",".join(rules_passed),
             "rules_failed": ",".join(rules_failed),
         })
