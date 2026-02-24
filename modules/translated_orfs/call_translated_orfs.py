@@ -84,7 +84,7 @@ def parse_args():
     p.add_argument("--psite_offsets", required=True, help="P-site offset table (TSV)")
     p.add_argument("--out_prefix", required=True)
 
-    p.add_argument("--min_psites", type=int, default=30)
+    p.add_argument("--min_psites", type=int, default=5)
     p.add_argument(
         "--min_len_codons",
         type=int,
