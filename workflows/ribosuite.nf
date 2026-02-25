@@ -10,6 +10,7 @@ include { ALIGN_RIBO_DEDUP }   from '../subworkflows/align_ribo_dedup.nf'
 include { RIBO_QC_BASIC }      from '../subworkflows/ribo_qc_basic.nf'
 include { CDS_QUANT }          from '../modules/cds_quant/main.nf'
 include { PSITE_TRACK }        from '../modules/psite_track/main.nf'
+include { TRANSLATED_ORFS }    from '../modules/translated_orfs/main.nf'
 
 
 /*
@@ -45,6 +46,8 @@ workflow RiboSuite {
         /*
          * 3) Ribo-seq QC
          * Includes PSITE_OFFSET internally
+         *
+         * qc.psite_offset_qc emits: (sample_id, bam, bai, offsets)
          */
         qc = RIBO_QC_BASIC(
             aligned.genome_bam,
@@ -72,7 +75,21 @@ workflow RiboSuite {
         )
 
         /*
-         * 5) Optional P-site bigWig tracks
+         * 5) Optional translated ORF calling (uses bam + offsets + gtf)
+         */
+        if (params.enable_translated_orfs) {
+            translated_orfs = TRANSLATED_ORFS(
+                // (sample_id, bam, bai, offsets)
+                qc.psite_offset_qc.map { sid, bam, bai, offsets ->
+                    tuple(sid, bam, bai, offsets)
+                },
+                // gtf
+                gtf
+            )
+        }
+
+        /*
+         * 6) Optional P-site bigWig tracks
          */
         if (params.enable_psite_track) {
 
@@ -102,6 +119,11 @@ workflow RiboSuite {
         metagene_qc             = qc.metagene_qc
 
         cds_quant
+
+        
+        translated_orfs_tsv = params.enable_translated_orfs \
+            ? translated_orfs.tsv \
+            : Channel.empty()
 
         psite_tracks = params.enable_psite_track \
             ? psite_track.psite_tracks_by_len \

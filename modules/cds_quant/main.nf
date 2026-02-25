@@ -25,7 +25,7 @@ process CDS_QUANT {
     python ${moduleDir}/cds_quant.py \
         --bam $bam \
         --gtf $gtf \
-        --offsets $offsets \
+        --psite_offsets $offsets \
         --sample $sample_id \
         --out_prefix ${sample_id}.cds_quant
     """

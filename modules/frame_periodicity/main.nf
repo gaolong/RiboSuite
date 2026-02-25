@@ -31,7 +31,7 @@ process FRAME_PERIODICITY_QC {
     python ${moduleDir}/frame_periodicity.py \
         --bam ${bam} \
         --gtf ${gtf} \
-        --offset ${psite_offset} \
+        --psite_offsets ${psite_offset} \
         --sample ${sample_id}
     """
 }
