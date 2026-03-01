@@ -1,3 +1,5 @@
+nextflow.enable.dsl = 2
+
 process STAR_RIBO_ALIGN {
 
     tag "$sample_id"
@@ -11,6 +13,8 @@ process STAR_RIBO_ALIGN {
     input:
         tuple val(sample_id), path(reads)
         path star_index
+        // Optional: merged RNA junctions in STAR --sjdbFileChrStartEnd format
+        path sjdb optional: true
 
     output:
         tuple val(sample_id),
@@ -29,6 +33,10 @@ process STAR_RIBO_ALIGN {
         def quantArg   = params.star_quantmode ? "--quantMode TranscriptomeSAM" : ""
         def rescue_thr = params.star_rescue_unique_pct ?: 30
 
+        // Global toggle: if false, never use sjdb even when provided
+        def useSjdb = (params.star_ribo_use_sjdb == null ? true : params.star_ribo_use_sjdb)
+        def sjdbArg = (useSjdb && sjdb) ? "--sjdbFileChrStartEnd ${sjdb}" : ""
+
         """
         set -euo pipefail
 
@@ -40,6 +48,7 @@ process STAR_RIBO_ALIGN {
             --readFilesIn ${reads} \\
             --readFilesCommand zcat \\
             --runThreadN ${task.cpus} \\
+            ${sjdbArg} \\
             --alignEndsType EndToEnd \\
             --outFilterMismatchNmax 2 \\
             --alignSJDBoverhangMin 1 \\
@@ -57,6 +66,7 @@ process STAR_RIBO_ALIGN {
         uniq_pct=\${uniq_pct%\\%}
 
         echo "[STAR_RIBO_ALIGN] ${sample_id}: uniquely mapped = \${uniq_pct}%" >> ${sample_id}.Log.final.out
+        echo "[STAR_RIBO_ALIGN] ${sample_id}: sjdb injected = ${ (useSjdb && sjdb) ? "YES" : "NO" }" >> ${sample_id}.Log.final.out
 
         ########################################
         # 3. Rescue if needed
@@ -68,6 +78,7 @@ process STAR_RIBO_ALIGN {
             echo "Original alignEndsType: EndToEnd" >> ${sample_id}.Log.final.out
             echo "Rescue alignEndsType:   Local" >> ${sample_id}.Log.final.out
             echo "Uniquely mapped reads:  \${uniq_pct}%" >> ${sample_id}.Log.final.out
+            echo "STAR sjdb injected:     ${ (useSjdb && sjdb) ? "YES" : "NO" }" >> ${sample_id}.Log.final.out
             echo "=====================================" >> ${sample_id}.Log.final.out
             echo "" >> ${sample_id}.Log.final.out
 
@@ -76,6 +87,7 @@ process STAR_RIBO_ALIGN {
                 --readFilesIn ${reads} \\
                 --readFilesCommand zcat \\
                 --runThreadN ${task.cpus} \\
+                ${sjdbArg} \\
                 --alignEndsType Local \\
                 --outFilterMismatchNmax 2 \\
                 --alignSJDBoverhangMin 1 \\
