@@ -17,6 +17,7 @@ process STAR_RNA_ALIGN {
 
     path "${meta.sample_id}.Log.final.out", emit: log
     path "${meta.sample_id}.ReadsPerGene.out.tab", emit: gene_counts
+    path "${meta.sample_id}.SJ.out.tab", emit: sj
 
     script:
     """
