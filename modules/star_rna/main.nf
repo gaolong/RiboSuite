@@ -6,6 +6,10 @@ process STAR_RNA_ALIGN {
 
     conda "bioconda::star=2.7.11b"
 
+    publishDir "${params.outdir}/rna/align/star_ribo",
+               mode: 'copy',
+               saveAs: { file -> "${sample_id}/${file}" }
+
     input:
     tuple val(meta), path(read1), path(read2)
     path star_index
