@@ -6,6 +6,13 @@ process FASTP {
 
     conda "bioconda::fastp=0.23.4"
 
+    publishDir "${params.outdir}/rna/qc/fastp",
+        mode: 'copy',
+        pattern: "*.fastp.json"
+    publishDir "${params.outdir}/rna/qc/fastp",
+        mode: 'copy',
+        pattern: "*.fastp.html"
+
     input:
     tuple val(meta), path(read1), path(read2)
 
