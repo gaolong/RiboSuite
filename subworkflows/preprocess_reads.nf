@@ -3,12 +3,14 @@ nextflow.enable.dsl = 2
 include { CUTADAPT_TRIM as CUTADAPT } from '../modules/cutadapt/main.nf'
 include { UMI_EXTRACT }               from '../modules/umi_extract/main.nf'
 include { FASTQC }                    from '../modules/fastqc/main.nf'
+include { BOWTIE2_FILTER }            from '../modules/bowtie2/main.nf'
 
 workflow PREPROCESS_READS {
 
     take:
         // (sample_id, fastq, adapter_5, adapter_3, bc_pattern, has_umi)
         reads_ch
+        contam_index
 
     main:
         /*
@@ -24,16 +26,9 @@ workflow PREPROCESS_READS {
 
         /*
          * 1. Adapter trimming
-         * Feed CUTADAPT exactly what it declares
          */
         cutadapt_in = checked.map { sid, fq, adapter_5, adapter_3, bc, has_umi ->
-            tuple(
-                sid,
-                fq,
-                adapter_5,
-                adapter_3,
-                bc
-            )
+            tuple(sid, fq, adapter_5, adapter_3, bc)
         }
 
         // CUTADAPT output: (sid, trimmed_fastq, bc_pattern)
@@ -41,13 +36,12 @@ workflow PREPROCESS_READS {
 
         /*
          * 2. Re-attach has_umi flag by join on sample_id
+         *    join → (sid, trimmed_fastq, bc_pattern, has_umi)
          */
         meta_has_umi = checked.map { sid, fq, adapter_5, adapter_3, bc, has_umi ->
             tuple(sid, has_umi)
         }
-
-        // join → (sid, trimmed_fastq, bc_pattern, has_umi)
-        trimmed = trimmed0.join(meta_has_umi)
+        trimmed = trimmed0.join(meta_has_umi, by: 0)
 
         /*
          * 3. Split by UMI presence
@@ -73,20 +67,37 @@ workflow PREPROCESS_READS {
         }
 
         /*
-         * 5. Canonical output: (sample_id, clean_fastq, has_umi)
+         * 5. Pre-bowtie "processed" (still not contam-filtered yet)
+         *    (sid, clean_fastq, has_umi)
          */
-        processed = umi_fastq_ch
+        processed0 = umi_fastq_ch
             .map { sid, fq -> tuple(sid, fq, true) }
             .mix(
                 no_umi_fastq_ch.map { sid, fq -> tuple(sid, fq, false) }
             )
 
         /*
-         * 6. QC (side-effect only)
+         * 6. Contaminant filtering (does NOT depend on junctions)
+         *    BOWTIE2_FILTER input: (sid, fastq), idx_dir, idx_prefix
+         *    output clean_reads: (sid, clean_fastq)
          */
-        FASTQC(processed.map { sid, fq, has_umi ->
-            tuple(sid, fq)
-        })
+        bowtie_clean = BOWTIE2_FILTER(
+            processed0.map { sid, fq, has_umi -> tuple(sid, fq) },
+            file(contam_index).parent,
+            file(contam_index).getName()
+        ).clean_reads
+
+        /*
+         * 7. Re-attach has_umi after bowtie
+         */
+        processed = bowtie_clean
+            .join(processed0.map { sid, fq, has_umi -> tuple(sid, has_umi) }, by: 0)
+            .map { sid, fq, has_umi -> tuple(sid, fq, has_umi) }
+
+        /*
+         * 8. QC (side-effect only)
+         */
+        FASTQC(processed.map { sid, fq, has_umi -> tuple(sid, fq) })
 
     emit:
         processed

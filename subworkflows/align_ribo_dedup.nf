@@ -1,93 +1,72 @@
 nextflow.enable.dsl = 2
 
-include { BOWTIE2_FILTER }            from '../modules/bowtie2/main.nf'
-include { STAR_RIBO_ALIGN }          from '../modules/star_ribo/main.nf'
-include { SAMTOOLS_INDEX }           from '../modules/samtools/index/main.nf'
-include { SAMTOOLS_FILTER_BY_QNAME } from '../modules/samtools/filter_by_qname/main.nf'
-include { UMI_DEDUP }                from '../modules/umi_dedup/main.nf'
-
+include { STAR_RIBO_ALIGN }           from '../modules/star_ribo/main.nf'
+include { SAMTOOLS_INDEX }            from '../modules/samtools/index/main.nf'
+include { SAMTOOLS_FILTER_BY_QNAME }  from '../modules/samtools/filter_by_qname/main.nf'
+include { UMI_DEDUP }                 from '../modules/umi_dedup/main.nf'
 
 workflow ALIGN_RIBO_DEDUP {
 
     take:
-        reads_ch        // (sid, clean_fastq, has_umi)
-        contam_index
+        reads_ch        // (sid, clean_fastq, has_umi, sjdb_or_null_or_NO_FILE)
         star_index
 
     main:
 
         /*
-         * ------------------------------------------------------------
-         * 0. Side metadata channel
-         * ------------------------------------------------------------
+         * Sentinel used by STAR_RIBO_ALIGN to mean "no sjdb"
+         * Make sure this file exists: assets/NO_FILE
          */
-        meta_has_umi = reads_ch.map { sid, fq, has_umi ->
-            tuple(sid, has_umi)
+        def NO_FILE = file("${projectDir}/assets/NO_FILE")
+
+        /*
+         * 0) Side metadata
+         */
+        meta_side = reads_ch.map { sid, fq, has_umi, sjdb ->
+            tuple(sid, has_umi, sjdb)
         }
 
         /*
-         * ------------------------------------------------------------
-         * 1. Contaminant filtering
-         *    Input : (sid, fastq)
-         *    Output: (sid, clean_fastq)
-         * ------------------------------------------------------------
+         * Normalize sjdb: null -> NO_FILE
          */
-        filtered_reads = BOWTIE2_FILTER(
-            reads_ch.map { sid, fq, has_umi -> tuple(sid, fq) },
-            file(contam_index).parent,
-            file(contam_index).getName()
-        ).clean_reads
-
-        filtered = filtered_reads.join(meta_has_umi)
-        // (sid, clean_fastq, has_umi)
+        filtered = reads_ch.map { sid, fq, has_umi, sjdb ->
+            def sjdb_path = (sjdb != null) ? sjdb : NO_FILE
+            tuple(sid, fq, has_umi, sjdb_path)
+        }
+        // (sid, clean_fastq, has_umi, sjdb_path)
 
         /*
-         * ------------------------------------------------------------
-         * 2. STAR genome / transcriptome alignment
-         * ------------------------------------------------------------
+         * 1) STAR alignment
          */
         STAR_RIBO_ALIGN(
-            filtered.map { sid, fq, has_umi -> tuple(sid, fq) },
-            file(star_index)
+            filtered.map { sid, fq, has_umi, sjdb_path -> tuple(sid, fq) },
+            file(star_index),
+            filtered.map { sid, fq, has_umi, sjdb_path -> sjdb_path }
         )
 
-        /*
-         * Explicit STAR outputs
-         */
         aligned_genome = STAR_RIBO_ALIGN.out.genome_bam
-            .join(meta_has_umi)
+            .join(meta_side.map { sid, has_umi, sjdb -> tuple(sid, has_umi) }, by: 0)
         // (sid, genome_bam, has_umi)
 
         aligned_tx = STAR_RIBO_ALIGN.out.tx_bam
-        // (sid, tx_bam)   [optional, may be empty]
 
         /*
-         * ------------------------------------------------------------
-         * 3. Index genome BAM
-         * ------------------------------------------------------------
+         * 2) Index
          */
         indexed0 = SAMTOOLS_INDEX(
-            aligned_genome.map { sid, genome_bam, has_umi ->
-                tuple(sid, genome_bam)
-            }
+            aligned_genome.map { sid, genome_bam, has_umi -> tuple(sid, genome_bam) }
         )
-        // (sid, genome_bam, bai)
-
-        indexed = indexed0.join(meta_has_umi)
+        indexed = indexed0.join(meta_side.map { sid, has_umi, sjdb -> tuple(sid, has_umi) }, by: 0)
         // (sid, genome_bam, bai, has_umi)
 
         /*
-         * ------------------------------------------------------------
-         * 4. Genome-space UMI deduplication
-         * ------------------------------------------------------------
+         * 3) UMI dedup
          */
         with_umi    = indexed.filter { sid, bam, bai, has_umi -> has_umi }
         without_umi = indexed.filter { sid, bam, bai, has_umi -> !has_umi }
 
         deduped = UMI_DEDUP(
-            with_umi.map { sid, bam, bai, has_umi ->
-                tuple(sid, bam, bai)
-            }
+            with_umi.map { sid, bam, bai, has_umi -> tuple(sid, bam, bai) }
         )
         // (sid, dedup_bam, dedup_bai, dedup_log, survivors_qnames)
 
@@ -102,34 +81,17 @@ workflow ALIGN_RIBO_DEDUP {
         genome_bam_out = deduped_genome.mix(passed_genome)
 
         /*
-         * ------------------------------------------------------------
-         * 5. Best-effort transcriptome BAM filtering
-         *    (UMI samples only, quantMode enabled only)
-         * ------------------------------------------------------------
+         * 4) tx filtering (UMI samples only)
          */
         tx_with_umi = aligned_tx
-            .join(deduped)
-            .map { sid,
-                   tx_bam,
-                   dedup_bam,
-                   dedup_bai,
-                   dedup_log,
-                   qnames ->
+            .join(deduped, by: 0)
+            .map { sid, tx_bam, dedup_bam, dedup_bai, dedup_log, qnames ->
                 tuple(sid, tx_bam, qnames)
             }
 
         tx_filtered = SAMTOOLS_FILTER_BY_QNAME(tx_with_umi)
-        // (sid, tx_filtered_bam, tx_filtered_bam.bai)
 
     emit:
-        /*
-         * Canonical genome BAM for QC & downstream analysis
-         */
         genome_bam = genome_bam_out
-
-        /*
-         * Optional transcriptome BAM
-         * (only when --star_quantmode true AND has_umi)
-         */
         tx_bam     = tx_filtered
 }
