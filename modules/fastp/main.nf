@@ -6,35 +6,41 @@ process FASTP {
 
     conda "bioconda::fastp=0.23.4"
 
-    publishDir "${params.outdir}/rna/qc/fastp",
+    publishDir "${params.outdir}/rna/fastp",
         mode: 'copy',
-        pattern: "*.fastp.json"
-    publishDir "${params.outdir}/rna/qc/fastp",
-        mode: 'copy',
-        pattern: "*.fastp.html"
+        saveAs: { file -> "${meta.sample_id}/${file}" }
 
     input:
-    tuple val(meta), path(read1), path(read2)
+    tuple val(meta), path(reads)
 
     output:
-    tuple val(meta),
-          path("${meta.sample_id}_R1.fastp.fq.gz"),
-          path("${meta.sample_id}_R2.fastp.fq.gz"),
-          emit: reads
-
-    path "${meta.sample_id}.fastp.json", emit: json
-    path "${meta.sample_id}.fastp.html", emit: html
+    tuple val(meta), path("${meta.sample_id}.clean*.fastq.gz"), emit: reads
+    tuple val(meta), path("${meta.sample_id}.fastp.json"),      emit: json
+    tuple val(meta), path("${meta.sample_id}.fastp.html"),      emit: html
 
     script:
-    """
-    fastp \
-      --in1 ${read1} \
-      --in2 ${read2} \
-      --out1 ${meta.sample_id}_R1.fastp.fq.gz \
-      --out2 ${meta.sample_id}_R2.fastp.fq.gz \
-      --detect_adapter_for_pe \
-      --thread ${task.cpus} \
-      --json ${meta.sample_id}.fastp.json \
-      --html ${meta.sample_id}.fastp.html
-    """
+    def read_list = (reads instanceof List) ? reads : [reads]
+    def n_reads   = read_list.size()
+
+    if (n_reads == 2) {
+        """
+        fastp \
+          --in1 ${read_list[0]} \
+          --in2 ${read_list[1]} \
+          --out1 ${meta.sample_id}.clean_1.fastq.gz \
+          --out2 ${meta.sample_id}.clean_2.fastq.gz \
+          --thread ${task.cpus} \
+          --json ${meta.sample_id}.fastp.json \
+          --html ${meta.sample_id}.fastp.html
+        """
+    } else {
+        """
+        fastp \
+          --in1 ${read_list[0]} \
+          --out1 ${meta.sample_id}.clean.fastq.gz \
+          --thread ${task.cpus} \
+          --json ${meta.sample_id}.fastp.json \
+          --html ${meta.sample_id}.fastp.html
+        """
+    }
 }
