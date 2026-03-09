@@ -2,7 +2,7 @@ nextflow.enable.dsl = 2
 
 process BOWTIE2_FILTER {
 
-    tag "$sample_id"
+    tag "${meta.sample_id}"
 
     conda "bioconda::bowtie2=2.5.2"
 
@@ -18,12 +18,12 @@ process BOWTIE2_FILTER {
 
             // always publish logs
             if (fname.endsWith('.log')) {
-                return "${sample_id}/${fname}"
+                return "${meta.sample_id}/${fname}"
             }
 
             // publish FASTQ only if enabled
             if (fname.endsWith('.fastq.gz') && params.publish_fastq) {
-                return "${sample_id}/${fname}"
+                return "${meta.sample_id}/${fname}"
             }
 
             // otherwise: do not publish
@@ -31,16 +31,16 @@ process BOWTIE2_FILTER {
         }
 
     input:
-        tuple val(sample_id), path(reads)
-        path index_dir
-        val  index_prefix
+        tuple val(meta), path(reads), path(index_dir), val(index_prefix)
 
     output:
-        tuple val(sample_id),
-              path("${sample_id}.clean.fastq.gz"),
+        tuple val(meta),
+              path("${meta.sample_id}.clean.fastq.gz"),
               emit: clean_reads
 
-        path "${sample_id}.bowtie2.log", emit: bowtie2_log
+        tuple val(meta),
+              path("${meta.sample_id}.bowtie2.log"),
+              emit: bowtie2_log
 
     script:
     """
@@ -51,9 +51,9 @@ process BOWTIE2_FILTER {
       -U ${reads} \\
       --very-sensitive \\
       -p ${task.cpus} \\
-      --un ${sample_id}.clean.fastq \\
-      2> ${sample_id}.bowtie2.log
+      --un ${meta.sample_id}.clean.fastq \\
+      2> ${meta.sample_id}.bowtie2.log
 
-    gzip ${sample_id}.clean.fastq
+    gzip ${meta.sample_id}.clean.fastq
     """
 }
