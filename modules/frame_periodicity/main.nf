@@ -1,28 +1,31 @@
+nextflow.enable.dsl = 2
+
 process FRAME_PERIODICITY_QC {
 
-    tag "$sample_id"
+    tag "${meta.sample_id}"
 
     conda "bioconda::pysam=0.22.0 conda-forge::matplotlib conda-forge::pandas"
 
     publishDir "${params.outdir}/ribo/qc/frame_periodicity",
         mode: 'copy',
-        saveAs: { file -> "${sample_id}/${file}" }
+        saveAs: { file -> "${meta.sample_id}/${file}" }
 
     input:
-        tuple val(sample_id),
+        tuple val(meta),
               path(bam),
               path(bai),
-              path(psite_offset)
-        path gtf
+              path(psite_offset),
+              path(gtf)
 
     output:
-        tuple val(sample_id),
-              path("${sample_id}.periodicity.by_region_by_length.tsv"),
+        tuple val(meta),
+              path("${meta.sample_id}.periodicity.by_region_by_length.tsv"),
               emit: periodicity_tsv
 
-        path("${sample_id}.periodicity.by_region_by_length.heatmap.png"),
-             optional: true,
-             emit: periodicity_png
+        tuple val(meta),
+              path("${meta.sample_id}.periodicity.by_region_by_length.heatmap.png"),
+              optional: true,
+              emit: periodicity_png
 
     script:
     """
@@ -32,6 +35,6 @@ process FRAME_PERIODICITY_QC {
         --bam ${bam} \
         --gtf ${gtf} \
         --psite_offsets ${psite_offset} \
-        --sample ${sample_id}
+        --sample ${meta.sample_id}
     """
 }
