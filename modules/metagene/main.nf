@@ -1,6 +1,8 @@
+nextflow.enable.dsl = 2
+
 process METAGENE_QC {
 
-    tag "$sample_id"
+    tag "${meta.sample_id}"
     label 'small'
 
     conda "bioconda::pysam=0.22.0 bioconda::htslib=1.20 bioconda::samtools=1.20 \
@@ -12,17 +14,17 @@ process METAGENE_QC {
         pattern: "*.{png,tsv}"
 
     input:
-        tuple val(sample_id),
+        tuple val(meta),
               path(bam),
               path(bai),
-              path(offset)
-        path gtf
+              path(offset),
+              path(gtf)
 
     output:
-        tuple val(sample_id),
-              path("${sample_id}.metagene.start.tsv"),
-              path("${sample_id}.metagene.stop.tsv"),
-              path("${sample_id}.metagene.png")
+        tuple val(meta),
+              path("${meta.sample_id}.metagene.start.tsv"),
+              path("${meta.sample_id}.metagene.stop.tsv"),
+              path("${meta.sample_id}.metagene.png")
 
     script:
     """
@@ -32,7 +34,7 @@ process METAGENE_QC {
       --bam ${bam} \
       --gtf ${gtf} \
       --offset ${offset} \
-      --sample ${sample_id} \
+      --sample ${meta.sample_id} \
       --window ${params.metagene_window ?: 50} \
       --max_transcripts_per_gene ${params.metagene_max_tx_per_gene ?: 1}
     """
