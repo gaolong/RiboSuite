@@ -1,6 +1,8 @@
+nextflow.enable.dsl = 2
+
 process PSITE_TRACK {
 
-    tag "${sample_id}"
+    tag "${meta.sample_id}"
 
     conda "conda-forge::pandas bioconda::pysam bioconda::samtools=1.18 bioconda::bedtools=2.31.0 bioconda::ucsc-bedgraphtobigwig"
 
@@ -9,26 +11,23 @@ process PSITE_TRACK {
         pattern: "*.bw"
 
     input:
-        tuple val(sample_id), path(bam)
-        path offset_tsv
-        path genome_sizes
+        tuple val(meta), path(bam), path(offset_tsv), path(genome_sizes)
 
     output:
-        tuple val(sample_id), path("${sample_id}.psite.len*.bw"), optional: true, emit: psite_tracks_by_len
-        tuple val(sample_id), path("${sample_id}.psite.all.bw"), optional: true, emit: psite_track_all
-        tuple val(sample_id), path("${sample_id}.psite.pos.bw"), optional: true, emit: psite_track_pos
-        tuple val(sample_id), path("${sample_id}.psite.neg.bw"), optional: true, emit: psite_track_neg
-        tuple val(sample_id), path("${sample_id}.psite.pos.len*.bw"), optional: true, emit: psite_tracks_pos_by_len
-        tuple val(sample_id), path("${sample_id}.psite.neg.len*.bw"), optional: true, emit: psite_tracks_neg_by_len
+        tuple val(meta), path("${meta.sample_id}.psite.len*.bw"), optional: true, emit: psite_tracks_by_len
+        tuple val(meta), path("${meta.sample_id}.psite.all.bw"), optional: true, emit: psite_track_all
+        tuple val(meta), path("${meta.sample_id}.psite.pos.bw"), optional: true, emit: psite_track_pos
+        tuple val(meta), path("${meta.sample_id}.psite.neg.bw"), optional: true, emit: psite_track_neg
+        tuple val(meta), path("${meta.sample_id}.psite.pos.len*.bw"), optional: true, emit: psite_tracks_pos_by_len
+        tuple val(meta), path("${meta.sample_id}.psite.neg.len*.bw"), optional: true, emit: psite_tracks_neg_by_len
 
     script:
-    // Track mode: none|all|stranded|both
+    def sample_id = meta.sample_id
     def mode = (params.psite_track_mode ?: 'both').toString()
 
     """
     set -euo pipefail
 
-    # Inject Nextflow var as a literal string into bash (no unescaped \$MODE problems)
     MODE='${mode}'
 
     if [ "\$MODE" = "none" ]; then
@@ -61,7 +60,6 @@ process PSITE_TRACK {
         local bed="\$1"
         local outprefix="\$2"
 
-        # skip if bed missing/empty
         if [ ! -s "\$bed" ]; then
             echo "bed_to_bw: missing/empty bed: \$bed (skip)"
             return 0
