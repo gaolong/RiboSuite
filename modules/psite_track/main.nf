@@ -10,6 +10,10 @@ process PSITE_TRACK {
         mode: 'copy',
         pattern: "*.bw"
 
+    publishDir "${params.outdir}/ribo/psite_tracks/bedgraph",
+        mode: 'copy',
+        pattern: "*.bedGraph"
+
     input:
         tuple val(meta), path(bam), path(offset_tsv), path(genome_sizes)
 
@@ -20,6 +24,10 @@ process PSITE_TRACK {
         tuple val(meta), path("${meta.sample_id}.psite.neg.bw"), optional: true, emit: psite_track_neg
         tuple val(meta), path("${meta.sample_id}.psite.pos.len*.bw"), optional: true, emit: psite_tracks_pos_by_len
         tuple val(meta), path("${meta.sample_id}.psite.neg.len*.bw"), optional: true, emit: psite_tracks_neg_by_len
+
+        tuple val(meta), path("${meta.sample_id}.psite.all.bedGraph"), optional: true, emit: psite_bedgraph_all
+        tuple val(meta), path("${meta.sample_id}.psite.pos.bedGraph"), optional: true, emit: psite_bedgraph_pos
+        tuple val(meta), path("${meta.sample_id}.psite.neg.bedGraph"), optional: true, emit: psite_bedgraph_neg
 
     script:
     def sample_id = meta.sample_id
@@ -55,13 +63,13 @@ process PSITE_TRACK {
         ${params.psite_by_length ? "--by_length" : ""} \\
         \$([ "\$want_strand" -eq 1 ] && echo "--strand_specific" || true)
 
-    # Helper: BED -> BW
-    bed_to_bw () {
+    # Helper: BED -> bedGraph + BW
+    bed_to_cov () {
         local bed="\$1"
         local outprefix="\$2"
 
         if [ ! -s "\$bed" ]; then
-            echo "bed_to_bw: missing/empty bed: \$bed (skip)"
+            echo "bed_to_cov: missing/empty bed: \$bed (skip)"
             return 0
         fi
 
@@ -85,36 +93,36 @@ process PSITE_TRACK {
       if ls ${sample_id}.psite.len*.bed 1>/dev/null 2>&1; then
           for bed in ${sample_id}.psite.len*.bed; do
               len=\$(basename "\$bed" | sed -E 's/.*\\.len([0-9]+)\\.bed/\\1/')
-              bed_to_bw "\$bed" "${sample_id}.psite.len\${len}"
+              bed_to_cov "\$bed" "${sample_id}.psite.len\${len}"
           done
       fi
     fi
 
     # --------------------------------------------------
-    # Combined all-length bigWig - only if want_all
+    # Combined all-length bigWig/bedGraph - only if want_all
     # --------------------------------------------------
     if [ "\$want_all" -eq 1 ]; then
-      bed_to_bw "${sample_id}.psite.all.bed" "${sample_id}.psite.all"
+      bed_to_cov "${sample_id}.psite.all.bed" "${sample_id}.psite.all"
     fi
 
     # --------------------------------------------------
-    # Strand-specific bigWigs - only if want_strand
+    # Strand-specific bigWigs/bedGraphs - only if want_strand
     # --------------------------------------------------
     if [ "\$want_strand" -eq 1 ]; then
-        bed_to_bw "${sample_id}.psite.pos.bed" "${sample_id}.psite.pos"
-        bed_to_bw "${sample_id}.psite.neg.bed" "${sample_id}.psite.neg"
+        bed_to_cov "${sample_id}.psite.pos.bed" "${sample_id}.psite.pos"
+        bed_to_cov "${sample_id}.psite.neg.bed" "${sample_id}.psite.neg"
 
         if ls ${sample_id}.psite.pos.len*.bed 1>/dev/null 2>&1; then
             for bed in ${sample_id}.psite.pos.len*.bed; do
                 len=\$(basename "\$bed" | sed -E 's/.*\\.pos\\.len([0-9]+)\\.bed/\\1/')
-                bed_to_bw "\$bed" "${sample_id}.psite.pos.len\${len}"
+                bed_to_cov "\$bed" "${sample_id}.psite.pos.len\${len}"
             done
         fi
 
         if ls ${sample_id}.psite.neg.len*.bed 1>/dev/null 2>&1; then
             for bed in ${sample_id}.psite.neg.len*.bed; do
                 len=\$(basename "\$bed" | sed -E 's/.*\\.neg\\.len([0-9]+)\\.bed/\\1/')
-                bed_to_bw "\$bed" "${sample_id}.psite.neg.len\${len}"
+                bed_to_cov "\$bed" "${sample_id}.psite.neg.len\${len}"
             done
         fi
     fi
