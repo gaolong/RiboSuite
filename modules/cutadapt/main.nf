@@ -138,22 +138,27 @@ process CUTADAPT_TRIM {
         done
 
         if [ -z "\$best_adapter" ] || [ "\$best_score" -eq 0 ]; then
-            echo "[ERROR] ${sample_id}: adapter rescue failed" >&2
-            exit 1
+            echo "[CUTADAPT_TRIM] ${sample_id}: adapter rescue failed, using input FASTQ as output"
+
+            cp ${reads} ${sample_id}.trimmed.fastq.gz
+
+            # Recreate required log for Nextflow
+            cp "${sample_id}.failed.cutadapt.log" "${sample_id}.cutadapt.log"
+            echo "[CUTADAPT_TRIM] ${sample_id}: rescue failed, fallback to input FASTQ" >> "${sample_id}.cutadapt.log"
+        else
+            echo "[CUTADAPT_TRIM] ${sample_id}: rescued 3' adapter = \$best_adapter"
+
+            cutadapt \\
+              -j ${task.cpus} \\
+              --trim-n \\
+              -a "\$best_adapter" \\
+              -a "G{10}" \\
+              -m ${params.cutadapt_min_len} \\
+              -M ${params.cutadapt_max_len} \\
+              -o ${sample_id}.trimmed.fastq.gz \\
+              ${reads} \\
+              >> ${sample_id}.cutadapt.log
         fi
-
-        echo "[CUTADAPT_TRIM] ${sample_id}: rescued 3' adapter = \$best_adapter"
-
-        cutadapt \\
-          -j ${task.cpus} \\
-          --trim-n \\
-          -a "\$best_adapter" \\
-          -a "G{10}" \\
-          -m ${params.cutadapt_min_len} \\
-          -M ${params.cutadapt_max_len} \\
-          -o ${sample_id}.trimmed.fastq.gz \\
-          ${reads} \\
-          >> ${sample_id}.cutadapt.log
     fi
     """
 }
