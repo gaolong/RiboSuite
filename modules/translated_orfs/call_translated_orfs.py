@@ -347,7 +347,7 @@ def rule_frame_dominance(fcounts, min_fraction):
     s = sum(fcounts)
     if s == 0:
         return False, 0.0
-    frac = max(fcounts) / s
+    frac = fcounts[0] / s
     return frac >= min_fraction, frac
 
 
