@@ -2,7 +2,7 @@ nextflow.enable.dsl = 2
 
 process CALL_TRANSLATED_ORFS {
 
-    tag "${sample_id}"
+    tag "${meta.sample_id}"
 
     conda "conda-forge::pandas bioconda::pysam"
 
@@ -11,17 +11,15 @@ process CALL_TRANSLATED_ORFS {
         overwrite: true
 
     input:
-    // from qc.psite_offset_qc: (sample_id, bam, bai, offsets)
-    tuple val(sample_id),
+    // tuple(meta, bam, bai, psite_offsets, gtf)
+    tuple val(meta),
           path(bam),
           path(bam_index),
-          path(psite_offsets)
-
-    // gtf passed separately (same for all samples)
-    path gtf
+          path(psite_offsets),
+          path(gtf)
 
     output:
-    tuple val(sample_id), path("${sample_id}.translated_orfs.tsv"), emit: tsv
+    tuple val(meta), path("${meta.sample_id}.translated_orfs.tsv"), emit: tsv
 
     script:
     """
@@ -29,18 +27,18 @@ process CALL_TRANSLATED_ORFS {
         --bam ${bam} \
         --gtf ${gtf} \
         --psite_offsets ${psite_offsets} \
-        --out_prefix ${sample_id}
+        --out_prefix ${meta.sample_id}
     """
 }
 
 workflow TRANSLATED_ORFS {
 
     take:
+    // tuple(meta, bam, bai, psite_offsets, gtf)
     psite_offset_qc_ch
-    gtf
 
     main:
-    out = CALL_TRANSLATED_ORFS(psite_offset_qc_ch, gtf)
+    out = CALL_TRANSLATED_ORFS(psite_offset_qc_ch)
 
     emit:
     tsv = out.tsv
